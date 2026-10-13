@@ -1,0 +1,26 @@
+# converted files of the original game - never committed, the converter writes them (the game at its first start)
+/assets/
+*.scene
+!/boot.scene
+convert.log
+
+# the decrypted exe of the game and the private notes about it
+/exe/
+
+# builds (the engine target dir is used, these only if built elsewhere)
+target/
+
+# temporary probes
+_probe.project
+_probe*
+
+# system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# working notes of the development (agents, plan, todo) - local only
+/HANDOVER.md
+/NOTES.md
+/PLAN.md
+/TODO.md

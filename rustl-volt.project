@@ -1,0 +1,240 @@
+{
+  "format": {
+    "generator": "rustl v0.0.1",
+    "version": "1.0.0"
+  },
+  "project": {
+    "name": "rustl-volt",
+    "version": "0.1.0",
+    "author": "",
+    "description": "",
+    "license": "",
+    "url": "",
+    "build": 11,
+    "editing_time_secs": 3548
+  },
+  "settings": {
+    "rendering": {
+      "clear_color": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "create_mipmaps": true,
+      "distance_sorting": true,
+      "fog": false,
+      "fog_color": [
+        0.6000000238418579,
+        0.699999988079071,
+        0.800000011920929
+      ],
+      "fog_density": 0.019999999552965164,
+      "frustum_culling": true,
+      "max_texture_resolution": null,
+      "msaa": 8,
+      "occlusion_culling": true,
+      "present_mode": "VSync",
+      "reverse_z": true,
+      "shadow": true,
+      "shadow_map_resolution": 2048,
+      "shadow_max_distance": 100.0,
+      "ssao": true,
+      "ssao_bias": 0.02500000037252903,
+      "ssao_half_res": false,
+      "ssao_radius": 0.5,
+      "ssao_strength": 1.0
+    },
+    "audio": {
+      "volume": 1.0
+    },
+    "window": {
+      "fullscreen": false
+    },
+    "input": {
+      "mouse_capture": "Always"
+    }
+  },
+  "scenes": [
+    {
+      "path": "boot.scene",
+      "active": true
+    },
+    {
+      "path": "frontend.scene"
+    },
+    {
+      "path": "garden1.scene"
+    },
+    {
+      "path": "bot_bat.scene"
+    },
+    {
+      "path": "muse_bat.scene"
+    },
+    {
+      "path": "market1.scene"
+    },
+    {
+      "path": "market2.scene"
+    },
+    {
+      "path": "toy2.scene"
+    },
+    {
+      "path": "toylite.scene"
+    },
+    {
+      "path": "cars.scene"
+    },
+    {
+      "path": "stunts.scene"
+    },
+    {
+      "path": "nhood1.scene"
+    },
+    {
+      "path": "ship1.scene"
+    },
+    {
+      "path": "ship2.scene"
+    },
+    {
+      "path": "muse1.scene"
+    },
+    {
+      "path": "muse2.scene"
+    },
+    {
+      "path": "markar.scene"
+    },
+    {
+      "path": "nhood2.scene"
+    },
+    {
+      "path": "wild_west1.scene"
+    },
+    {
+      "path": "wild_west2.scene"
+    },
+    {
+      "path": "garden1_reversed.scene"
+    },
+    {
+      "path": "market1_reversed.scene"
+    },
+    {
+      "path": "market2_reversed.scene"
+    },
+    {
+      "path": "muse1_reversed.scene"
+    },
+    {
+      "path": "muse2_reversed.scene"
+    },
+    {
+      "path": "nhood1_reversed.scene"
+    },
+    {
+      "path": "nhood1_battle.scene"
+    },
+    {
+      "path": "nhood2_reversed.scene"
+    },
+    {
+      "path": "ship1_reversed.scene"
+    },
+    {
+      "path": "ship2_reversed.scene"
+    },
+    {
+      "path": "toy2_reversed.scene"
+    },
+    {
+      "path": "toylite_reversed.scene"
+    },
+    {
+      "path": "wild_west1_reversed.scene"
+    },
+    {
+      "path": "wild_west2_reversed.scene"
+    },
+    {
+      "path": "toylite_mirrored.scene"
+    },
+    {
+      "path": "nhood1_mirrored.scene"
+    },
+    {
+      "path": "nhood1_reversed_mirrored.scene"
+    },
+    {
+      "path": "market2_mirrored.scene"
+    },
+    {
+      "path": "market2_reversed_mirrored.scene"
+    },
+    {
+      "path": "muse2_mirrored.scene"
+    },
+    {
+      "path": "muse2_reversed_mirrored.scene"
+    },
+    {
+      "path": "garden1_mirrored.scene"
+    },
+    {
+      "path": "garden1_reversed_mirrored.scene"
+    },
+    {
+      "path": "toylite_reversed_mirrored.scene"
+    },
+    {
+      "path": "wild_west1_mirrored.scene"
+    },
+    {
+      "path": "wild_west1_reversed_mirrored.scene"
+    },
+    {
+      "path": "toy2_mirrored.scene"
+    },
+    {
+      "path": "toy2_reversed_mirrored.scene"
+    },
+    {
+      "path": "nhood2_mirrored.scene"
+    },
+    {
+      "path": "nhood2_reversed_mirrored.scene"
+    },
+    {
+      "path": "ship1_mirrored.scene"
+    },
+    {
+      "path": "ship1_reversed_mirrored.scene"
+    },
+    {
+      "path": "muse1_mirrored.scene"
+    },
+    {
+      "path": "muse1_reversed_mirrored.scene"
+    },
+    {
+      "path": "market1_mirrored.scene"
+    },
+    {
+      "path": "market1_reversed_mirrored.scene"
+    },
+    {
+      "path": "wild_west2_mirrored.scene"
+    },
+    {
+      "path": "wild_west2_reversed_mirrored.scene"
+    },
+    {
+      "path": "ship2_mirrored.scene"
+    },
+    {
+      "path": "ship2_reversed_mirrored.scene"
+    }
+  ]
+}

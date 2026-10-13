@@ -1,0 +1,8 @@
+# written by the rustl editor when the project was created - add your own settings, the editor does not overwrite this file
+# the lock and the builds of this project live outside of src: the lock here in .cargo (the editor keeps the entries of the engine in it), the builds in the engine
+
+[resolver]
+lockfile-path = ".cargo/Cargo.lock"
+
+[build]
+target-dir = "../../../../target/projects"

@@ -1,0 +1,27 @@
+[package]
+name = "rustl_volt"
+version = "0.1.0"
+edition = "2024"
+
+# a workspace of its own - the project can be anywhere, also outside of the engine folder
+# .cargo/config.toml: its lock (.cargo/Cargo.lock, the editor keeps the entries of the engine in it) and its builds (target dir of the engine)
+[workspace]
+
+# src/app.rs is the code of the project - cdylib: the wasm module of the web export, the editor builds a shared library of its own (cargo rustc --crate-type dylib)
+[lib]
+path = "src/app.rs"
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = ["dynamic"]
+# the engine from the shared library of the editor (cargo dev) - exports build without it (--no-default-features)
+dynamic = ["dep:rustl_dylib"]
+
+[dependencies]
+rustl = { path = "../../../..", default-features = false }
+rustl_dylib = { path = "../../../../crates/rustl_dylib", optional = true }
+
+# the converter of the first start (setup.rs) and its folder picker - not on the web (no game files there)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+revolt_converter = { path = "../converter", default-features = false }
+rfd = "0.17"

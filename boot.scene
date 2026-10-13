@@ -1,0 +1,393 @@
+{
+  "name": "boot",
+  "settings": {
+    "max_lights": 10
+  },
+  "physics": {
+    "gravity": [
+      0.0,
+      -9.81,
+      0.0
+    ],
+    "fixed_timestep": 0.016666668,
+    "max_substeps": 4,
+    "ground_plane": true,
+    "ground_plane_y": 0.0,
+    "sleep_linear_threshold": 0.05,
+    "sleep_angular_threshold": 0.5,
+    "time_until_sleep": 0.5,
+    "freeze_resting": true,
+    "freeze_after": 1.0,
+    "wake_speed": 0.5,
+    "settle_time": 3.0,
+    "settle_damping": 5.0,
+    "solver_iterations": 8,
+    "hit_speed": 1.0,
+    "smooth_mesh_edges": false
+  },
+  "editor_cameras": [
+    {
+      "controller": {
+        "base": {
+          "icon": "✈",
+          "is_enabled": true,
+          "name": "Fly Controller"
+        },
+        "collision": false,
+        "collision_distance": 0.5,
+        "gamepad_movement": true,
+        "gamepad_sensitivity": 0.029999999329447746,
+        "keyboard_movement": true,
+        "mouse_movement": true,
+        "mouse_sensitivity": [
+          0.001500000013038516,
+          0.001500000013038516
+        ],
+        "move_speed": 0.20000000298023224,
+        "move_speed_shift": 0.4000000059604645,
+        "type": "FlyController",
+        "viewport_only": false
+      },
+      "data": {
+        "bottom": -1.0,
+        "clipping_far": 1000.0,
+        "clipping_near": 0.10000000149011612,
+        "culling_mask": 4194303,
+        "dir": [
+          -0.0,
+          -5.0,
+          -10.0
+        ],
+        "eye_pos": [
+          0.0,
+          5.0,
+          10.0
+        ],
+        "fovy": 0.7853981852531433,
+        "left": -1.0,
+        "left_ear_pos": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "projection_type": "Perspective",
+        "resolution_aspect_ratio": 1.8699780702590942,
+        "resolution_height": 1369,
+        "resolution_width": 2560,
+        "right": 1.0,
+        "right_ear_pos": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "top": 1.0,
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "use_target_node_for_ears": true,
+        "viewport": {
+          "height": 1.0,
+          "width": 1.0,
+          "x": 0.0,
+          "y": 0.0
+        }
+      },
+      "enabled": true,
+      "id": 8,
+      "name": "Editor Cam",
+      "node": null,
+      "tags": {},
+      "uuid": "1a7e5dca-0102-44a0-ad53-3c6753e803d0"
+    },
+    {
+      "controller": {
+        "base": {
+          "icon": "↔",
+          "is_enabled": true,
+          "name": "Pan Controller"
+        },
+        "gamepad_movement": true,
+        "gamepad_sensitivity": 0.029999999329447746,
+        "keyboard_movement": true,
+        "mouse_wheel_sensitivity": 0.25,
+        "mouse_wheel_zoom": true,
+        "move_speed": 0.10000000149011612,
+        "move_speed_shift": 0.20000000298023224,
+        "ortho_max_extent": 200.0,
+        "type": "PanController",
+        "viewport_only": true
+      },
+      "data": {
+        "bottom": -5.0,
+        "clipping_far": 1000.0,
+        "clipping_near": 0.10000000149011612,
+        "culling_mask": 6291455,
+        "dir": [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        "eye_pos": [
+          0.0,
+          500.0,
+          0.0
+        ],
+        "fovy": 1.5707963705062866,
+        "left": -5.0,
+        "left_ear_pos": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "projection_type": "Orthogonal",
+        "resolution_aspect_ratio": 1.8699780702590942,
+        "resolution_height": 1369,
+        "resolution_width": 2560,
+        "right": 5.0,
+        "right_ear_pos": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "top": 5.0,
+        "up": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "use_target_node_for_ears": true,
+        "viewport": {
+          "height": 0.5,
+          "width": 0.5,
+          "x": 0.0,
+          "y": 0.5
+        }
+      },
+      "enabled": false,
+      "id": 9,
+      "name": "Quad Cam Top (top left)",
+      "node": null,
+      "tags": {},
+      "uuid": "2839b78b-eb5c-4ebe-b781-1303e432a656"
+    },
+    {
+      "controller": {
+        "base": {
+          "icon": "↔",
+          "is_enabled": true,
+          "name": "Pan Controller"
+        },
+        "gamepad_movement": true,
+        "gamepad_sensitivity": 0.029999999329447746,
+        "keyboard_movement": true,
+        "mouse_wheel_sensitivity": 0.25,
+        "mouse_wheel_zoom": true,
+        "move_speed": 0.10000000149011612,
+        "move_speed_shift": 0.20000000298023224,
+        "ortho_max_extent": 200.0,
+        "type": "PanController",
+        "viewport_only": true
+      },
+      "data": {
+        "bottom": -5.0,
+        "clipping_far": 1000.0,
+        "clipping_near": 0.10000000149011612,
+        "culling_mask": 10485759,
+        "dir": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "eye_pos": [
+          0.0,
+          0.0,
+          500.0
+        ],
+        "fovy": 1.5707963705062866,
+        "left": -5.0,
+        "left_ear_pos": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "projection_type": "Orthogonal",
+        "resolution_aspect_ratio": 1.8699780702590942,
+        "resolution_height": 1369,
+        "resolution_width": 2560,
+        "right": 5.0,
+        "right_ear_pos": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "top": 5.0,
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "use_target_node_for_ears": true,
+        "viewport": {
+          "height": 0.5,
+          "width": 0.5,
+          "x": 0.5,
+          "y": 0.0
+        }
+      },
+      "enabled": false,
+      "id": 10,
+      "name": "Quad Cam Front (bottom right)",
+      "node": null,
+      "tags": {},
+      "uuid": "c10ddaa2-3a5d-4340-8ddc-c5bb32ec9e88"
+    },
+    {
+      "controller": {
+        "base": {
+          "icon": "↔",
+          "is_enabled": true,
+          "name": "Pan Controller"
+        },
+        "gamepad_movement": true,
+        "gamepad_sensitivity": 0.029999999329447746,
+        "keyboard_movement": true,
+        "mouse_wheel_sensitivity": 0.25,
+        "mouse_wheel_zoom": true,
+        "move_speed": 0.10000000149011612,
+        "move_speed_shift": 0.20000000298023224,
+        "ortho_max_extent": 200.0,
+        "type": "PanController",
+        "viewport_only": true
+      },
+      "data": {
+        "bottom": -5.0,
+        "clipping_far": 1000.0,
+        "clipping_near": 0.10000000149011612,
+        "culling_mask": 18874367,
+        "dir": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "eye_pos": [
+          500.0,
+          0.0,
+          0.0
+        ],
+        "fovy": 1.5707963705062866,
+        "left": -5.0,
+        "left_ear_pos": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "projection_type": "Orthogonal",
+        "resolution_aspect_ratio": 1.8699780702590942,
+        "resolution_height": 1369,
+        "resolution_width": 2560,
+        "right": 5.0,
+        "right_ear_pos": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "top": 5.0,
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "use_target_node_for_ears": true,
+        "viewport": {
+          "height": 0.5,
+          "width": 0.5,
+          "x": 0.0,
+          "y": 0.0
+        }
+      },
+      "enabled": false,
+      "id": 11,
+      "name": "Quad Cam Right (bottom left)",
+      "node": null,
+      "tags": {},
+      "uuid": "38ee4c50-07d5-4567-a02c-911d1261c108"
+    },
+    {
+      "controller": {
+        "base": {
+          "icon": "✈",
+          "is_enabled": true,
+          "name": "Fly Controller"
+        },
+        "collision": false,
+        "collision_distance": 0.5,
+        "gamepad_movement": true,
+        "gamepad_sensitivity": 0.029999999329447746,
+        "keyboard_movement": true,
+        "mouse_movement": true,
+        "mouse_sensitivity": [
+          0.001500000013038516,
+          0.001500000013038516
+        ],
+        "move_speed": 0.10000000149011612,
+        "move_speed_shift": 0.20000000298023224,
+        "type": "FlyController",
+        "viewport_only": true
+      },
+      "data": {
+        "bottom": -1.0,
+        "clipping_far": 1000.0,
+        "clipping_near": 0.10000000149011612,
+        "culling_mask": 35651583,
+        "dir": [
+          -0.0,
+          -5.0,
+          -10.0
+        ],
+        "eye_pos": [
+          0.0,
+          5.0,
+          10.0
+        ],
+        "fovy": 0.7853981852531433,
+        "left": -1.0,
+        "left_ear_pos": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "projection_type": "Perspective",
+        "resolution_aspect_ratio": 1.8699780702590942,
+        "resolution_height": 1369,
+        "resolution_width": 2560,
+        "right": 1.0,
+        "right_ear_pos": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "top": 1.0,
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "use_target_node_for_ears": true,
+        "viewport": {
+          "height": 0.5,
+          "width": 0.5,
+          "x": 0.5,
+          "y": 0.5
+        }
+      },
+      "enabled": false,
+      "id": 12,
+      "name": "Quad Cam User (top right)",
+      "node": null,
+      "tags": {},
+      "uuid": "ed34a79e-1c5c-455d-8902-04c89d78d0a3"
+    }
+  ]
+}

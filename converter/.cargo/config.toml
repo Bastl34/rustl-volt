@@ -1,0 +1,3 @@
+# builds go into the target dir of the engine, not into data/
+[build]
+target-dir = "../../../../target/revolt_converter"

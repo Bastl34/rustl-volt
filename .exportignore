@@ -1,0 +1,25 @@
+# left out of an export of this project (scripts/build.mjs) - patterns like .gitignore, code/ and hidden entries are never packed
+# no file of the original game is shipped: the game converts them at its first start (code/src/setup.rs)
+
+# converted files of the original game - the .project keeps the scenes as links, the converter writes them
+assets/
+*.scene
+!boot.scene
+
+# notes and generators
+*.md
+*.py
+
+# tools and research - the exe must never be shipped
+converter/
+exe/
+formats/
+schematics/
+screenshots/
+
+# temporary probes
+_probe.project
+
+
+# icon
+*.af
