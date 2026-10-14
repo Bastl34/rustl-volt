@@ -377,7 +377,7 @@ Text, one `KEY value ;comment` per line, keys case-insensitive, strings in singl
 | `FOGSTART` | units | fog start, a bit less than `FARCLIP` |
 | `FOGCOLOR` | r g b | 0–255, also the background |
 | `VERTFOGSTART` / `VERTFOGEND` | units | vertical fog |
-| `WORLDRGBPER` / `MODELRGBPER` / `INSTANCERGBPER` | percent | brightness of the baked colors |
+| `WORLDRGBPER` / `MODELRGBPER` / `INSTANCERGBPER` | percent | the model loader scales every corner color by it (`c * per / 100`, alpha kept): MODELRGBPER for cars and object models (some objects load at 100 %, which is unchecked), INSTANCERGBPER for `.fin` models |
 | `MIRRORS` | type mix intensity distance | mirror floors, e.g. `0 0.60 0 512` |
 | `REDBOOK` | start end | CD audio track range |
 | `MP3` | string | music file |
@@ -649,7 +649,7 @@ Nothing in the `.fob` says an object is simulated - the type decides in code. Ri
 
 The ABC block init also sets an inertia of 600 on the diagonal (inverse 1/600). For comparison: the body of `rc` has mass 2.0. Friction and restitution of the objects are not decoded.
 
-The trolley is a car without drive in the original: `cars/trolley/Parameters.txt` (`Selectable TRUE`, `Obtain -1`) with `IsPowered FALSE` on the front wheels, 4 wheels `TrollWL.m` / `TrollWR.m`. Wheels at `Offset1` (see [Parameters.txt](#parameterstxt)). Placement (`.fob` position against the `.ncp` floor below): bottles, packets and ABC blocks sit within ±2 units on the floor, a shelf or the block below (stacks of 60 units). The trolleys hang 18–45 units above the floor (wheels at `Offset1` y 0) - they drop at the start. Not simulated (spin, move in code): 0 Spinning Barrel, 52 Tumbleweed, `firework.hul`, `Probe.hul`. The Wobbly Cone is a rigid body in the exe (outside mode 1 only) - the six of the frontend stand on the table of the options view, the clockwork cars knock them over (see [Frontend](#frontend-game-behaviour)).
+The trolley is a car without drive in the original: `cars/trolley/Parameters.txt` (`Selectable TRUE`, `Obtain -1`) with `IsPowered FALSE` on the front wheels, 4 wheels `TrollWL.m` / `TrollWR.m`. Wheels at `Offset1` (see [Parameters.txt](#parameterstxt)). Placement (`.fob` position against the `.ncp` floor below): bottles, packets and ABC blocks sit within ±2 units on the floor, a shelf or the block below (stacks of 60 units). The trolleys hang 18–45 units above the floor (wheels at `Offset1` y 0) - they drop at the start. Not simulated (spin, move in code): 0 Spinning Barrel, 52 Tumbleweed (the remake: a very light sphere body), `firework.hul`, `Probe.hul`. The Wobbly Cone is a rigid body in the exe (outside mode 1 only) - the six of the frontend stand on the table of the options view, the clockwork cars knock them over (see [Frontend](#frontend-game-behaviour)).
 
 ## Parameters.txt
 
@@ -659,7 +659,7 @@ Car polygons are drawn with the `TPAGE`, whatever page index they hold: rc 0, ad
 
 Parts, as the converter places them (the game moves them every frame):
 - **Wheel**: the model sits at `Offset1`. `Offset2` is already modelled into it: the tread center lies about `Offset2` aside of the model origin (rc front left: tread x -8.9..1.1, center -3.9, `Offset2` -4.5; cougar -2.0 / -1.5; trolley -5 / -4.5). So `Offset1 + Offset2` is the tread / collision center. A Korean RVGL wiki says the same (Offset1 = where the wheel is drawn).
-- **Spring**: model along +y (rc: y 2–15, `Length` 16), from `Offset` towards the wheel.
+- **Spring**: model along +y (rc: y 2–15, `Length` 16), from `Offset` towards the wheel. Stretched to the wheel center (distance / `Length`, rc 20.8 / 16) - the remake does that; from the screenshots, not checked in the exe. Axles the same (model along +z, `Length`).
 - **Axle**: model along +z (rc: z 0–12, `Length` 12), from `Offset` towards the wheel.
 - **Pin**: model along -y (rc: 15 long); placed on the wheel center + `Offset` - not checked.
 - **Aerial**: `misc/Aerial.m` is one section of length 1 along -y, `Aerialt.m` the top; `Length`, `Direction`, `Stiffness`, `Damping` - the game bends it in sections (count unknown).
@@ -1057,6 +1057,7 @@ A menu: title string id, title icon, flags, position (640 x 480 space), then its
 
 - `namestand.m`, the wheel `namewheel.m` at (0, -490, -80) of the stand, turning about its z axis.
 - 30 positions: A-Z, space, !, DEL, END. The wheel turns to `letter / 30` turns, 1/6 of the remaining way per frame. Left / right step the letter (wrapping), select takes it; DEL deletes, END finishes; 14 chars at most (then END is forced).
+- Sounds: taking a letter (select), typing a letter (A-Z only) and backspace play menuLeftRight at 44100 Hz; left / right on the wheel play nothing of their own.
 - Text: "Player n" in orange, the name in yellow after it, a blinking `_` (500 ms).
 
 ### Clockwork cars of the options view

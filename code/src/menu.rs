@@ -758,13 +758,14 @@ impl Menu
         }
         for c in input.text.chars().filter(|c| c.is_ascii_alphanumeric() || *c == ' ' || *c == '!')
         {
-            if self.name.chars().count() < NAME_LENGTH { self.name.push(c.to_ascii_uppercase()); }
+            if self.name.chars().count() < NAME_LENGTH { self.name.push(c.to_ascii_uppercase()); self.sound("menuleftright"); }
             if let Some(index) = letter_index(c) { self.letter = index; }
         }
+        // like the game: typing, deleting and taking a letter all click (menuLeftRight)
         if input.backspace || input.down
         {
             self.name.pop();
-            self.sound("menuprev");
+            self.sound("menuleftright");
         }
         // Enter: the name is done (the END of the wheel does the same)
         if input.enter
@@ -779,7 +780,7 @@ impl Menu
             match self.letter
             {
                 LETTER_END => { self.sound("menunext"); self.go(Screen::SelectCar); },
-                LETTER_DELETE => { self.name.pop(); self.sound("menuprev"); },
+                LETTER_DELETE => { self.name.pop(); self.sound("menuleftright"); },
                 index =>
                 {
                     if self.name.chars().count() < NAME_LENGTH

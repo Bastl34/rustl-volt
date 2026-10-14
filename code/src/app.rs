@@ -317,6 +317,7 @@ impl App for Game
             let assets = assets_folder(scene);
             let mut placed = vec![];
             for_each_node(&scene.nodes, &mut |node| if node.read().unwrap().tags.contains("revolt_car") { placed.push(node.clone()); });
+            for car in &placed { cars::apply_level_shade(scene, car); cars::hide_pins(car); }
             for car in placed { cars::add_env_map(&mut state, &car, &assets); }
         }
 
@@ -404,6 +405,7 @@ impl App for Game
         self.pause_sounds(&context.state.borrow());
         self.update_own_car(&context.state.borrow());
         cars::update_hover(&mut context.state.borrow_mut());
+        cars::update_suspension(&mut context.state.borrow_mut());
         self.find_practice_stars(&mut context.state.borrow_mut());
         self.ambient.update(&context.state.borrow());
         self.animated.update(&context.state.borrow());

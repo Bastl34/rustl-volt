@@ -389,6 +389,9 @@ impl Setup
             painter.image(LOGO, Anchor::Center, [(WIDTH - LOADING_LOGO_WIDTH) * 0.5, LOADING_LOGO_Y, LOADING_LOGO_WIDTH, height], Color32::WHITE);
         }
         let (title, lines, note, bar, buttons) = self.content(state);
+        // paths always with forward slashes on the screen
+        let slashes = |text: String| text.replace('\\', "/");
+        let (lines, note, bar): (Vec<String>, _, _) = (lines.into_iter().map(slashes).collect(), note.map(slashes), bar.map(|(progress, text)| (progress, slashes(text))));
         // only behind text - the loading screen shows the picture alone
         if !lines.is_empty()
         {

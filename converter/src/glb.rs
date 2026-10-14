@@ -23,6 +23,8 @@ pub struct Glb
     nodes: Vec<Value>,
     animations: Vec<Value>,
     extensions_used: Vec<&'static str>,
+    // minFilter LINEAR: no mipmaps like the game (cars - small details on the page blur into their neighbours)
+    pub no_mipmaps: bool,
 }
 
 impl Glb
@@ -170,10 +172,11 @@ impl Glb
         }
         if !self.textures.is_empty()
         {
-            // linear, linear mipmap linear - 0 repeat, 1 clamp to edge
+            // linear, linear mipmap linear (or linear) - 0 repeat, 1 clamp to edge
+            let min_filter = if self.no_mipmaps { 9729 } else { 9987 };
             root["samplers"] = json!([
-                { "magFilter": 9729, "minFilter": 9987, "wrapS": 10497, "wrapT": 10497 },
-                { "magFilter": 9729, "minFilter": 9987, "wrapS": 33071, "wrapT": 33071 },
+                { "magFilter": 9729, "minFilter": min_filter, "wrapS": 10497, "wrapT": 10497 },
+                { "magFilter": 9729, "minFilter": min_filter, "wrapS": 33071, "wrapT": 33071 },
             ]);
         }
         if !self.extensions_used.is_empty()

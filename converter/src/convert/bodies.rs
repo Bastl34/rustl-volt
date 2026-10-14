@@ -44,6 +44,8 @@ pub fn body(kind: i32) -> Option<Body>
         // the wobbly cones on the table of the menu: mass 0.5 like the exe, the clockwork cars knock them over
         36 => body(0.5, 0.6, 0.1, false),
         43 => body(0.3, 0.6, 0.7, true),
+        // moved by code in the game (wind, not decoded) - here a very light ball the cars push (user wish)
+        52 => body(0.03, 0.6, 0.3, true),
         57 => body(1.2, 0.5, 0.1, false),
         58 => body(1.5, 0.5, 0.1, false),
         59 => body(1.6, 0.6, 0.1, false),

@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use super::geometry::{linear_rgba, to_gltf, MeshWriter};
 use super::texture::{load_extra_pages, load_pages};
 use super::collision::{self, CollisionStats};
-use super::{clouds, effects, frontend, instances, lights, mirror, objects, scene, skybox, sounds, start_car, track, Log, Settings};
+use super::{bodies, clouds, effects, frontend, instances, lights, mirror, objects, scene, skybox, sounds, start_car, track, Log, Settings};
 use crate::glb::Glb;
 use crate::revolt::{find_file, MIRRORED, REVERSED};
 use crate::revolt::inf::Inf;
@@ -60,6 +60,7 @@ pub fn convert(settings: &Settings, id: &str, log: &Log, progress: &dyn Fn(f32))
         Some(path) => { log.read(&path); lit::load(&path).unwrap_or_else(|err| { log.warn(format!("  {}: {err:#} - no lights", path.display())); vec![] }) },
         None => vec![],
     };
+    shade_models(inf.as_ref(), &mut level_instances, &mut level_objects, log);
     if mirrored
     {
         log.step("1b  Mirror (left / right like the game's mirror mode)");
@@ -531,3 +532,35 @@ fn group_meshes(world: &World) -> Vec<(String, Vec<usize>)>
     groups
 }
 
+
+// INSTANCERGBPER / MODELRGBPER of the .inf: the game scales the corner colors of every model it loads (ship2 50 %) - objects only for the physics ones here
+fn shade_models(inf: Option<&Inf>, instances: &mut instances::LevelInstances, objects: &mut objects::LevelObjects, log: &Log)
+{
+    let percent = |key: &str| inf.and_then(|inf| inf.get(key)).and_then(|v| v.split_whitespace().next()?.parse::<f64>().ok()).map(|v| v as i64).filter(|v| *v != 100);
+    if let Some(per) = percent("INSTANCERGBPER")
+    {
+        for model in &mut instances.models { scale_colors(&mut model.mesh, per); }
+        log.info(format!("  instance colors × {per} % (INSTANCERGBPER), {} models", instances.models.len()));
+    }
+    if let Some(per) = percent("MODELRGBPER")
+    {
+        let mut models: Vec<usize> = objects.objects.iter().zip(&objects.model_of).filter(|(object, _)| bodies::body(object.kind).is_some()).filter_map(|(_, m)| *m).collect();
+        models.sort();
+        models.dedup();
+        for m in &models { scale_colors(&mut objects.models[*m].mesh, per); }
+        log.info(format!("  physics object colors × {per} % (MODELRGBPER), {} models - the cars get it in the game", models.len()));
+    }
+}
+
+// per channel c * per / 100 like the game, alpha kept (0xAARRGGBB)
+fn scale_colors(mesh: &mut Mesh, per: i64)
+{
+    for polygon in &mut mesh.polygons
+    {
+        for color in &mut polygon.colors
+        {
+            let channel = |shift: u32| ((((*color >> shift) & 0xff) as i64 * per / 100).clamp(0, 255) as u32) << shift;
+            *color = (*color & 0xff00_0000) | channel(16) | channel(8) | channel(0);
+        }
+    }
+}

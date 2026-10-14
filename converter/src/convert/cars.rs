@@ -214,6 +214,14 @@ pub fn convert(settings: &Settings, car: &str, log: &Log) -> Result<ConvertedCar
             {
                 let direction = to_gltf([0, 1, 2].map(|a| wheel[a] - offset[a]));
                 node["rotation"] = json!(rotation_between(to_gltf(axis), direction));
+                // stretched from the offset to the wheel center like the game - the app follows the sprung wheel
+                let length = block.float("Length").unwrap_or(0.0);
+                if length > 0.0
+                {
+                    let stretch = direction.iter().map(|v| v * v).sum::<f32>().sqrt() / length;
+                    node["scale"] = json!(axis.map(|a| if a > 0.0 { stretch } else { 1.0 }));
+                    node["extras"]["revolt_length_m"] = json!(length * scale);
+                }
             }
             if let Some(mesh) = mesh { node["mesh"] = json!(mesh); }
             children.push(glb.node(node));
@@ -230,6 +238,9 @@ pub fn convert(settings: &Settings, car: &str, log: &Log) -> Result<ConvertedCar
         let side = SIDE_NAMES.get(index as usize).map_or(index.to_string(), |s| s.to_string());
         let mut extras = block_extras(block, "revolt_");
         extras.insert("rustl_collision".into(), json!(false));
+        // the app keeps it at this offset from the sprung wheel
+        let pin_offset = to_gltf(offset).map(|v| v * scale);
+        for (axis, v) in ["x", "y", "z"].iter().zip(pin_offset) { extras.insert(format!("revolt_pin_offset_{axis}"), json!(v)); }
         let mut node = json!({ "name": format!("pin_{side}"), "translation": place([0, 1, 2].map(|a| wheel[a] + offset[a])), "extras": extras });
         if let Some(mesh) = mesh_of(model, false, &mut glb, &mut writer) { node["mesh"] = json!(mesh); }
         children.push(glb.node(node));

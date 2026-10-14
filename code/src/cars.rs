@@ -4,6 +4,7 @@
 use rustl::prelude::*;
 use rustl::helper::option_or_id::OptionOrId;
 use rustl::serde_json;
+use rustl::nalgebra::{Matrix4, UnitQuaternion};
 use rustl::state::scene::components::transformation::TransformationData;
 use rustl::state::scene::node::{NodeSettings, PhysicsBodyType, PhysicsSettings, PhysicsShape};
 use rustl::state::scene::scene_controller::scene_controller::SceneController;
@@ -318,6 +319,88 @@ pub fn update_hover(state: &mut State)
     }
 }
 
+// springs and axles reach from their offset to the sprung wheel (stretched) - like the game every frame
+pub fn update_suspension(state: &mut State)
+{
+    for scene in state.scenes.iter()
+    {
+        let cars: Vec<NodeItem> = scene.controller.iter().filter_map(|controller| controller.as_any().downcast_ref::<VehicleController>()).filter_map(|vehicle| vehicle.node.as_ref().cloned()).collect();
+        for car in cars
+        {
+            let Some(model) = find_child(&car, "model") else { continue; };
+            for (side, wheel_name) in SIDE_NAMES.iter().zip(WHEEL_NODES)
+            {
+                let Some(hub) = find_child(&model, wheel_name).and_then(|wheel| local_transform(&wheel)).map(|t| t.column(3).xyz()) else { continue; };
+                for (kind, axis) in [("spring", Vector3::new(0.0, -1.0, 0.0)), ("axle", Vector3::new(0.0, 0.0, -1.0))]
+                {
+                    if let Some(part) = find_child(&model, &format!("{kind}_{side}")) { aim_part(&part, &hub, &axis); }
+                }
+            }
+        }
+    }
+}
+
+const SIDE_NAMES: [&str; 4] = ["front_left", "front_right", "back_left", "back_right"];
+
+fn local_transform(node: &NodeItem) -> Option<Matrix4<f32>>
+{
+    let transformation = node.read().unwrap().find_component::<Transformation>()?;
+    component_downcast!(transformation, Transformation);
+    Some(*transformation.get_transform())
+}
+
+fn set_local_transform(node: &NodeItem, local: Matrix4<f32>)
+{
+    let Some(transformation) = node.read().unwrap().find_component::<Transformation>() else { return; };
+    component_downcast_mut!(transformation, Transformation);
+    transformation.set_local_transform(local);
+}
+
+// the model axis (glTF) turned towards the hub and stretched along it
+fn aim_part(part: &NodeItem, hub: &Vector3<f32>, axis: &Vector3<f32>)
+{
+    let Some(length) = number(&part.read().unwrap(), "revolt_length_m").filter(|l| *l > 0.0) else { return; };
+    let Some(local) = local_transform(part) else { return; };
+    let position = local.column(3).xyz();
+    let direction = hub - position;
+    let distance = direction.norm();
+    if distance < 1e-5 { return; }
+    let rotation = UnitQuaternion::rotation_between(axis, &direction).unwrap_or_else(|| UnitQuaternion::from_axis_angle(&Vector3::x_axis(), std::f32::consts::PI));
+    let stretch = distance / length;
+    let scale = axis.map(|a| if a.abs() > 0.5 { stretch } else { 1.0 });
+    set_local_transform(part, Matrix4::new_translation(&position) * rotation.to_homogeneous() * Matrix4::new_nonuniform_scaling(&scale));
+}
+
+// the pins of rc and flag stood 15 units above the hub - not seen in the game, what PIN Length (-1.35) does is not decoded
+pub fn hide_pins(car: &NodeItem)
+{
+    for side in SIDE_NAMES
+    {
+        let name = format!("pin_{side}");
+        let mut found = vec![];
+        collect_named(car, &name, &mut found);
+        for pin in found { hide_tree(&pin); }
+    }
+}
+
+// a mesh of several primitives becomes sibling nodes "<name> primitive_<n>" without a node "<name>"
+fn collect_named(node: &NodeItem, name: &str, found: &mut Vec<NodeItem>)
+{
+    for child in node.read().unwrap().nodes.clone()
+    {
+        let matches = { let child_name = &child.read().unwrap().name; child_name == name || child_name.strip_prefix(name).is_some_and(|rest| rest.starts_with(" primitive_")) };
+        if matches { found.push(child.clone()); }
+        collect_named(&child, name, found);
+    }
+}
+
+// the renderer checks only the node itself - the primitives of a mesh are child nodes
+fn hide_tree(node: &NodeItem)
+{
+    node.write().unwrap().settings.visible = false;
+    for child in node.read().unwrap().nodes.clone() { hide_tree(&child); }
+}
+
 // ufo and q have wheels without a model - auto setup finds only meshes and then took +z as forward (Re-Volt cars face -z): the wheel nodes become the wheels
 fn add_modelless_wheels(controller: &mut VehicleController, car: &NodeItem)
 {
@@ -583,6 +666,29 @@ pub fn add_env_map(state: &mut State, car: &NodeItem, assets: &str)
         component_downcast_mut!(material, Material);
         material.set_texture(texture.clone(), TextureType::Environment);
         material.get_data_mut().get_mut().reflectivity = strength;
+    }
+}
+
+// MODELRGBPER of the .inf: the game scales the corner colors of every car model by it at load (ship2: 50 %)
+pub fn apply_level_shade(scene: &Scene, car: &NodeItem)
+{
+    let Some(level) = crate::track::find_node(&scene.nodes, &|node| node.tags.contains("revolt_level") && node.extras.contains("model_rgb")) else { return; };
+    let Some(share) = number(&level.read().unwrap(), "model_rgb").filter(|share| (share - 1.0).abs() > 0.001) else { return; };
+    // scaled in gamma space by the game, the shader works linear
+    let factor = share.max(0.0).powf(2.2);
+    shade_parts(car, factor);
+}
+
+fn shade_parts(node: &NodeItem, factor: f32)
+{
+    for child in node.read().unwrap().nodes.clone()
+    {
+        if let Some(material) = child.read().unwrap().find_component::<Material>()
+        {
+            component_downcast_mut!(material, Material);
+            material.get_data_mut().get_mut().base_color *= factor;
+        }
+        shade_parts(&child, factor);
     }
 }
 

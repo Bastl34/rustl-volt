@@ -71,9 +71,9 @@
           0.0
         ],
         "projection_type": "Perspective",
-        "resolution_aspect_ratio": 1.8699780702590942,
-        "resolution_height": 1369,
-        "resolution_width": 2560,
+        "resolution_aspect_ratio": 1.7777777910232544,
+        "resolution_height": 1080,
+        "resolution_width": 1920,
         "right": 1.0,
         "right_ear_pos": [
           1.0,
@@ -95,11 +95,11 @@
         }
       },
       "enabled": true,
-      "id": 8,
+      "id": 20,
       "name": "Editor Cam",
       "node": null,
       "tags": {},
-      "uuid": "1a7e5dca-0102-44a0-ad53-3c6753e803d0"
+      "uuid": "f30f3687-1b61-4504-ad8d-00b95abcd372"
     },
     {
       "controller": {
@@ -142,9 +142,9 @@
           0.0
         ],
         "projection_type": "Orthogonal",
-        "resolution_aspect_ratio": 1.8699780702590942,
-        "resolution_height": 1369,
-        "resolution_width": 2560,
+        "resolution_aspect_ratio": 1.7777777910232544,
+        "resolution_height": 1080,
+        "resolution_width": 1920,
         "right": 5.0,
         "right_ear_pos": [
           1.0,
@@ -166,11 +166,11 @@
         }
       },
       "enabled": false,
-      "id": 9,
+      "id": 21,
       "name": "Quad Cam Top (top left)",
       "node": null,
       "tags": {},
-      "uuid": "2839b78b-eb5c-4ebe-b781-1303e432a656"
+      "uuid": "3a18230b-f2d5-4c84-850a-d901819580a2"
     },
     {
       "controller": {
@@ -213,9 +213,9 @@
           0.0
         ],
         "projection_type": "Orthogonal",
-        "resolution_aspect_ratio": 1.8699780702590942,
-        "resolution_height": 1369,
-        "resolution_width": 2560,
+        "resolution_aspect_ratio": 1.7777777910232544,
+        "resolution_height": 1080,
+        "resolution_width": 1920,
         "right": 5.0,
         "right_ear_pos": [
           1.0,
@@ -237,11 +237,11 @@
         }
       },
       "enabled": false,
-      "id": 10,
+      "id": 22,
       "name": "Quad Cam Front (bottom right)",
       "node": null,
       "tags": {},
-      "uuid": "c10ddaa2-3a5d-4340-8ddc-c5bb32ec9e88"
+      "uuid": "ba72f0a9-ae3f-4f7b-882b-1dc7098918de"
     },
     {
       "controller": {
@@ -284,9 +284,9 @@
           0.0
         ],
         "projection_type": "Orthogonal",
-        "resolution_aspect_ratio": 1.8699780702590942,
-        "resolution_height": 1369,
-        "resolution_width": 2560,
+        "resolution_aspect_ratio": 1.7777777910232544,
+        "resolution_height": 1080,
+        "resolution_width": 1920,
         "right": 5.0,
         "right_ear_pos": [
           1.0,
@@ -308,11 +308,11 @@
         }
       },
       "enabled": false,
-      "id": 11,
+      "id": 23,
       "name": "Quad Cam Right (bottom left)",
       "node": null,
       "tags": {},
-      "uuid": "38ee4c50-07d5-4567-a02c-911d1261c108"
+      "uuid": "f716145e-d107-43bb-9ce0-f44b98718ddb"
     },
     {
       "controller": {
@@ -359,9 +359,9 @@
           0.0
         ],
         "projection_type": "Perspective",
-        "resolution_aspect_ratio": 1.8699780702590942,
-        "resolution_height": 1369,
-        "resolution_width": 2560,
+        "resolution_aspect_ratio": 1.7777777910232544,
+        "resolution_height": 1080,
+        "resolution_width": 1920,
         "right": 1.0,
         "right_ear_pos": [
           1.0,
@@ -383,11 +383,11 @@
         }
       },
       "enabled": false,
-      "id": 12,
+      "id": 24,
       "name": "Quad Cam User (top right)",
       "node": null,
       "tags": {},
-      "uuid": "ed34a79e-1c5c-455d-8902-04c89d78d0a3"
+      "uuid": "52b3d3b2-f942-4c42-8481-db5805250f37"
     }
   ]
 }

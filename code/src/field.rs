@@ -217,6 +217,8 @@ fn spawn_car(state: &mut State, scene_id: u32, assets: &str, car: &str, name: &s
     // on its wheels above the floor - the body is made where the node is
     set_position(&node, slot.floor + Vector3::y() * (cars::ground_height(&controller) + cars::LIFT));
     scene.controller.push(Box::new(controller));
+    cars::apply_level_shade(scene, &node);
+    cars::hide_pins(&node);
     cars::add_env_map(state, &node, assets);
 
     Ok(Opponent { node, car: car.to_string() })
@@ -226,6 +228,7 @@ fn spawn_car(state: &mut State, scene_id: u32, assets: &str, car: &str, name: &s
 pub fn show_car(state: &mut State, scene_id: u32, assets: &str, car: &str) -> Result<NodeItem, String>
 {
     let node = show_model(state, scene_id, &format!("{assets}/cars/{car}/{car}.glb"), &format!("{car}_shown")).map_err(|error| format!("{error} - convert the car"))?;
+    cars::hide_pins(&node);
     cars::add_env_map(state, &node, assets);
     Ok(node)
 }

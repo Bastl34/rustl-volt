@@ -17,7 +17,10 @@ use super::{Log, Settings};
 // 4: assets/models/firework.glb, putty_bomb.glb, burst.glb (the podium ceremony)
 // 5: sounds as 16 bit PCM wav instead of ogg (no vorbis encoder in the game), the converter runs inside the game
 // 6, 7, 8: no output change - bumped to show the conversion at the start of the game (video)
-pub const ASSET_VERSION: u32 = 8;
+// 9: INSTANCERGBPER / MODELRGBPER of the .inf on instances and physics objects (ship2, toylite, wild_west1 darker)
+// 10: tumbleweeds are light sphere bodies (car textures without mipmaps - undone in 11)
+// 11: springs / axles stretched to the wheel center (revolt_length_m), pin offsets, car mipmaps on again
+pub const ASSET_VERSION: u32 = 11;
 pub const FILE: &str = "convert.json";
 const FORMAT: u32 = 1;
 
