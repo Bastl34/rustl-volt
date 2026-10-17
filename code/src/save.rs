@@ -10,7 +10,8 @@ use rustl::serde_json;
 
 use crate::assist::DriveMode;
 use crate::bot::Difficulty;
-use crate::menu::{AudioSettings, VideoSettings};
+use crate::menu::{AudioSettings, MultiSetup, PlayerSetup, VideoSettings, MAX_PLAYERS};
+use crate::pad::Device;
 use crate::race::RaceSettings;
 
 const KEY: &str = "save";
@@ -36,6 +37,32 @@ pub struct SaveData
     pub challenges: BTreeSet<String>,
     // championship: the won cups (0 Bronze .. 3 Platinum) - each opens the next
     pub cups_won: BTreeSet<usize>,
+    // the Split Screen menu: mode, players, opponents, per player name, device, car, driving mode
+    pub multi: Option<Multi>,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Default)]
+#[serde(crate = "rustl::serde", default)]
+pub struct Multi
+{
+    pub trial: bool,
+    pub players: usize,
+    // the first version had only on / off - read when the count is missing
+    pub bots: bool,
+    pub opponents: Option<usize>,
+    pub difficulty: String,
+    pub slots: Vec<MultiSlot>,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Default)]
+#[serde(crate = "rustl::serde", default)]
+pub struct MultiSlot
+{
+    pub name: String,
+    pub device: String,
+    // index in the car list of the menu
+    pub car: usize,
+    pub mode: String,
 }
 
 // the Best Trial Times of a track hold this many laps
@@ -145,6 +172,33 @@ impl SaveData
     pub fn set_audio_settings(&mut self, audio: &AudioSettings)
     {
         self.audio = Some(Audio { master: audio.master, music: audio.music, effects: audio.effects });
+    }
+
+    pub fn multi_setup(&self) -> MultiSetup
+    {
+        let mut setup = MultiSetup::default();
+        let Some(saved) = &self.multi else { return setup; };
+        setup.trial = saved.trial;
+        setup.players = saved.players.clamp(2, MAX_PLAYERS);
+        setup.opponents = saved.opponents.unwrap_or(if saved.bots { setup.opponents } else { 0 }).min(12 - setup.players);
+        if let Some(difficulty) = Difficulty::ALL.iter().find(|d| d.label() == saved.difficulty) { setup.difficulty = *difficulty; }
+        for (slot, saved) in setup.slots.iter_mut().zip(&saved.slots)
+        {
+            *slot = PlayerSetup
+            {
+                name: saved.name.clone(),
+                device: Device::from_key(&saved.device),
+                car: saved.car,
+                mode: DriveMode::ALL.iter().copied().find(|m| m.label() == saved.mode).unwrap_or_default(),
+            };
+        }
+        setup
+    }
+
+    pub fn set_multi_setup(&mut self, setup: &MultiSetup)
+    {
+        let slots = setup.slots.iter().map(|slot| MultiSlot { name: slot.name.clone(), device: slot.device.map(Device::key).unwrap_or_default(), car: slot.car, mode: slot.mode.label().to_string() }).collect();
+        self.multi = Some(Multi { trial: setup.trial, players: setup.players, bots: setup.opponents > 0, opponents: Some(setup.opponents), difficulty: setup.difficulty.label().to_string(), slots });
     }
 
     pub fn video_settings(&self) -> VideoSettings

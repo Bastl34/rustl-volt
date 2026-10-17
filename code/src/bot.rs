@@ -93,6 +93,8 @@ pub struct BotView
     pub wheelbase: f32,
     // radians of full lock
     pub max_steer: f32,
+    // share of its speed it drives at - Junior RC: a bot far ahead of the best Junior RC player waits for it (1 = full)
+    pub catch_up: f32,
 }
 
 pub enum BotAction
@@ -193,6 +195,8 @@ impl Bot
             let distance = samples[i].1.max(0.0);
             target_speed = target_speed.min((corner * corner + 2.0 * BRAKE_DECEL * distance).sqrt());
         }
+
+        target_speed *= view.catch_up;
 
         let mut drive = VehicleDriveInput::default();
         let error = target_speed - view.speed;

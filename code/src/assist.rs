@@ -69,7 +69,7 @@ impl DriveMode
             DriveMode::Simulation => "No driving aids, no sliding along walls",
             DriveMode::Arcade => "Like the game: slides along walls",
             DriveMode::Console => "Arcade + a steadier car, bumps do not flip it",
-            DriveMode::JuniorRc => "Console + steers back onto the track at its edges",
+            DriveMode::JuniorRc => "Console + keeps you on the track, puts you back when lost, bots wait",
         }
     }
 

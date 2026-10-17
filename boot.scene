@@ -95,11 +95,11 @@
         }
       },
       "enabled": true,
-      "id": 20,
+      "id": 2,
       "name": "Editor Cam",
       "node": null,
       "tags": {},
-      "uuid": "f30f3687-1b61-4504-ad8d-00b95abcd372"
+      "uuid": "fe0287a6-955e-4676-8d30-56ac32576731"
     },
     {
       "controller": {
@@ -166,11 +166,11 @@
         }
       },
       "enabled": false,
-      "id": 21,
+      "id": 3,
       "name": "Quad Cam Top (top left)",
       "node": null,
       "tags": {},
-      "uuid": "3a18230b-f2d5-4c84-850a-d901819580a2"
+      "uuid": "31f88364-bc38-4a90-a8b0-b04ea56b8cbc"
     },
     {
       "controller": {
@@ -237,11 +237,11 @@
         }
       },
       "enabled": false,
-      "id": 22,
+      "id": 4,
       "name": "Quad Cam Front (bottom right)",
       "node": null,
       "tags": {},
-      "uuid": "ba72f0a9-ae3f-4f7b-882b-1dc7098918de"
+      "uuid": "4ca3516a-a3ea-4164-9973-612d193a5dc1"
     },
     {
       "controller": {
@@ -308,11 +308,11 @@
         }
       },
       "enabled": false,
-      "id": 23,
+      "id": 5,
       "name": "Quad Cam Right (bottom left)",
       "node": null,
       "tags": {},
-      "uuid": "f716145e-d107-43bb-9ce0-f44b98718ddb"
+      "uuid": "ffb26df5-4fd8-4fe6-8bed-50dbbaf2205e"
     },
     {
       "controller": {
@@ -383,11 +383,11 @@
         }
       },
       "enabled": false,
-      "id": 24,
+      "id": 6,
       "name": "Quad Cam User (top right)",
       "node": null,
       "tags": {},
-      "uuid": "52b3d3b2-f942-4c42-8481-db5805250f37"
+      "uuid": "422270b5-cfe1-4780-b687-2a2c57efc7a9"
     }
   ]
 }

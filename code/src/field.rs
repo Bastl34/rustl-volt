@@ -133,10 +133,11 @@ pub fn spawn(state: &mut State, scene_id: u32, assets: &str, candidates: &[&str]
     opponents
 }
 
-// the car of the menu instead of the start car: driven by the player with the camera of the start car
-pub fn spawn_player(state: &mut State, scene_id: u32, assets: &str, car: &str, slot: Slot, cam_name: &str) -> Result<NodeItem, String>
+// the car of the menu instead of the start car: driven by the player with the camera of the start car - split screen: player 1.. with a camera each
+pub fn spawn_player(state: &mut State, scene_id: u32, assets: &str, car: &str, player: usize, slot: Slot, cam_name: &str) -> Result<NodeItem, String>
 {
-    spawn_car(state, scene_id, assets, car, &format!("{car}_player"), slot, Some(cam_name)).map(|opponent| opponent.node)
+    let name = if player == 0 { format!("{car}_player") } else { format!("{car}_player{}", player + 1) };
+    spawn_car(state, scene_id, assets, car, &name, slot, Some(cam_name)).map(|opponent| opponent.node)
 }
 
 // a car that drives by code without camera (the clockwork cars of the menu) - removed with `remove`
@@ -318,12 +319,15 @@ pub fn unbench_start_car(scene: &mut Scene, start_car: &NodeItem, mut controller
     scene.controller.push(controller);
 }
 
-// the car of the menu goes again
-pub fn remove_player(scene: &mut Scene, player: &NodeItem)
+// the cars of the menu go again
+pub fn remove_players(scene: &mut Scene, players: &[NodeItem])
 {
     remove_by_name(scene, PLAYER_CONTROLLER_NAME);
-    let id = player.read().unwrap().id;
-    scene.delete_node_by_id(id, true, false, true, false);
+    for player in players
+    {
+        let id = player.read().unwrap().id;
+        scene.delete_node_by_id(id, true, false, true, false);
+    }
 }
 
 fn remove_by_name(scene: &mut Scene, name: &str)

@@ -1,5 +1,5 @@
 // the menu of the game in the frontend level: title, main menu, select race, enter name (the wheel), select car (the boxes), select track (the big screen), options,
-// select cup + its summary (championship), best trial times, progress table
+// select cup + its summary (championship), best trial times, progress table, multi-player (split screen: players, devices, then name and car one after another)
 // flow, views and colors like revolt.exe (formats/README.md, Frontend), drawn with the HUD painter in the 640 x 480 space of the game
 
 use std::collections::HashMap;
@@ -14,7 +14,7 @@ use crate::assist::DriveMode;
 use crate::bot::Difficulty;
 use crate::frontend::{self, Target, WHEEL_LETTERS};
 use crate::hud::{Anchor, Painter, HEIGHT, WIDTH};
-use crate::pad::Buttons;
+use crate::pad::{Buttons, Device};
 use crate::cup::{CUPS, LEVELS};
 use crate::race::{format_time, RaceSettings};
 use crate::save::{SaveData, TRIAL_TIMES};
@@ -147,6 +147,7 @@ pub enum Screen
     CupSummary,
     TrialTimes,
     Progress,
+    MultiSetup,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -198,6 +199,106 @@ pub struct RaceChoice
     pub stunts: bool,
     // a race of the championship: stage and stages of the cup (the loading screen)
     pub cup_stage: Option<(usize, usize)>,
+    // split screen: the local players, empty for one player (car and player_name)
+    pub players: Vec<PlayerChoice>,
+}
+
+#[derive(Clone)]
+pub struct PlayerChoice
+{
+    pub car: String,
+    pub name: String,
+    pub device: Device,
+    pub mode: DriveMode,
+}
+
+// split screen: up to this many local players
+pub const MAX_PLAYERS: usize = 8;
+// the rows of the Split Screen menu before the two of each player: mode, players, opponents, difficulty
+const MULTI_ROWS: usize = 4;
+// players and bots together, like Number of Cars
+const MAX_CARS: usize = 12;
+
+// a player of the Split Screen menu - name and car are chosen one after another after it
+#[derive(Clone, Default)]
+pub struct PlayerSetup
+{
+    pub name: String,
+    pub device: Option<Device>,
+    // index in the car list
+    pub car: usize,
+    pub mode: DriveMode,
+}
+
+#[derive(Clone)]
+pub struct MultiSetup
+{
+    pub trial: bool,
+    pub players: usize,
+    // the number of bots and how hard they drive
+    pub opponents: usize,
+    pub difficulty: Difficulty,
+    pub slots: Vec<PlayerSetup>,
+    // the player choosing name and car right now
+    turn: usize,
+}
+
+impl Default for MultiSetup
+{
+    fn default() -> Self
+    {
+        Self { trial: false, players: 2, opponents: 4, difficulty: Difficulty::Medium, slots: vec![PlayerSetup::default(); MAX_PLAYERS], turn: 0 }
+    }
+}
+
+impl MultiSetup
+{
+    // every device a player can have: the keyboard, its halves, the connected gamepads
+    fn devices(pads: &[usize]) -> Vec<Device>
+    {
+        [Device::Keyboard, Device::KeyboardLeft, Device::KeyboardRight].into_iter().chain(pads.iter().map(|id| Device::Gamepad(*id))).collect()
+    }
+
+    fn free(&self, player: usize, device: Device, pads: &[usize]) -> bool
+    {
+        let connected = match device { Device::Gamepad(id) => pads.contains(&id), _ => true };
+        connected && (0..self.players).filter(|&i| i != player).all(|i| !self.slots[i].device.is_some_and(|other| other.conflicts(device)))
+    }
+
+    // fresh: every player gets a device again (the number of players changed) - else only the ones without one, with a taken one or a gone gamepad
+    // the first players get the keyboard, the others the gamepads; too few gamepads: the keyboard is shared (WASD / arrows)
+    fn assign(&mut self, pads: &[usize], fresh: bool)
+    {
+        let players = self.players;
+        for i in 0..players
+        {
+            let keep = !fresh && self.slots[i].device.is_some_and(|device| { let connected = match device { Device::Gamepad(id) => pads.contains(&id), _ => true }; connected && (0..i).all(|j| !self.slots[j].device.is_some_and(|other| other.conflicts(device))) });
+            if !keep { self.slots[i].device = None; }
+        }
+        let mut order: Vec<Device> = if pads.len() + 1 >= players { vec![Device::Keyboard] } else { vec![Device::KeyboardLeft, Device::KeyboardRight] };
+        order.extend(pads.iter().map(|id| Device::Gamepad(*id)));
+        for i in 0..players
+        {
+            if self.slots[i].device.is_some() { continue; }
+            self.slots[i].device = order.iter().copied().find(|device| self.free(i, *device, pads));
+        }
+    }
+
+    // left / right on the device of a player: the next one no other player has
+    fn cycle(&mut self, player: usize, pads: &[usize], forward: bool)
+    {
+        let options: Vec<Device> = Self::devices(pads).into_iter().filter(|device| self.free(player, *device, pads)).collect();
+        if options.is_empty() { return; }
+        let current = self.slots[player].device.and_then(|device| options.iter().position(|d| *d == device));
+        let next = match current { Some(i) => step(i, options.len(), forward), None => 0 };
+        self.slots[player].device = Some(options[next]);
+    }
+
+    // every player has a device of his own
+    fn valid(&self, pads: &[usize]) -> bool
+    {
+        (0..self.players).all(|i| self.slots[i].device.is_some_and(|device| self.free(i, device, pads)))
+    }
 }
 
 #[derive(Clone)]
@@ -235,6 +336,9 @@ fn variant_tag(reversed: bool, mirrored: bool) -> &'static str
 {
     match (reversed, mirrored) { (false, false) => "", (true, false) => " R", (false, true) => " M", (true, true) => " R M" }
 }
+
+// (reversed, mirrored) in the order up / down steps through them
+const DIRECTIONS: [(bool, bool); 4] = [(false, false), (true, false), (false, true), (true, true)];
 
 fn direction_name(reversed: bool, mirrored: bool) -> &'static str
 {
@@ -310,7 +414,7 @@ const CONTROLS: [(&str, &str, &str); 13] =
     ("Look Around", "", "Right Stick"),
     ("Watch Others", "B", "LB"),
     ("Split View", "V", ""),
-    ("Pause Menu", "Enter / Esc", "Start"),
+    ("Pause Menu", "Enter / Esc / P", "Start"),
     ("Fullscreen", "F", ""),
     ("Menu", "Arrows Enter Bksp", "D-Pad A B"),
 ];
@@ -353,6 +457,12 @@ pub struct Menu
     pub saved: SaveData,
     textures: Option<Textures>,
     failed: bool,
+    // Split Screen: the setup, on while its name / car / track screens run, the name and car of one player meanwhile
+    pub multi: MultiSetup,
+    multi_on: bool,
+    solo: Option<(String, usize)>,
+    // the connected gamepads (player ids) - the app sets them every frame
+    pub gamepads: Vec<usize>,
 }
 
 impl Menu
@@ -365,6 +475,7 @@ impl Menu
             name: String::new(), letter: 0, car: 0, track: 0, reversed: false, mirrored: false, trial_track: 0, trial_reversed: false, trial_mirrored: false,
             message: vec![], screen_time: 0.0, clock: 0.0, events: vec![],
             folder: folder.to_string(), version: String::new(), saved: SaveData::default(), textures: None, failed: false,
+            multi: MultiSetup::default(), multi_on: false, solo: None, gamepads: vec![],
         }
     }
 
@@ -375,6 +486,7 @@ impl Menu
         self.settings = saved.race_settings(self.settings);
         self.audio = saved.audio_settings();
         self.video = saved.video_settings();
+        self.multi = saved.multi_setup();
         self.saved = saved.clone();
     }
 
@@ -382,7 +494,9 @@ impl Menu
     pub fn store(&self, saved: &mut SaveData) -> bool
     {
         let before = saved.clone();
-        saved.name = self.name.clone();
+        // while the players of split screen choose their names the own name waits in solo
+        saved.name = self.solo.as_ref().map_or_else(|| self.name.clone(), |(name, _)| name.clone());
+        saved.set_multi_setup(&self.multi);
         saved.set_race_settings(&self.settings);
         saved.set_audio_settings(&self.audio);
         saved.set_video_settings(&self.video);
@@ -405,7 +519,111 @@ impl Menu
     // after a race: the main menu
     pub fn back_from_race(&mut self)
     {
+        self.end_multi();
         self.go(Screen::Main);
+    }
+
+    // the device whose buttons drive the menu: the player choosing name and car in split screen (the keyboard halves share the whole keyboard), else all of them
+    pub fn input_device(&self) -> Option<Device>
+    {
+        if !self.multi_on || !matches!(self.screen, Screen::EnterName | Screen::SelectCar | Screen::CarChosen) { return None; }
+        self.multi.slots.get(self.multi.turn).and_then(|slot| slot.device).map(|device| if device.is_keyboard() { Device::Keyboard } else { device })
+    }
+
+    // Split Screen: name and car of the first player, the own ones wait
+    fn begin_turns(&mut self)
+    {
+        if self.solo.is_none() { self.solo = Some((self.name.clone(), self.car)); }
+        if self.multi.slots[0].name.trim().is_empty() { self.multi.slots[0].name = self.name.clone(); }
+        self.mode = if self.multi.trial { Mode::TimeTrial } else { Mode::SingleRace };
+        self.multi.turn = 0;
+        self.load_turn();
+        self.go(Screen::EnterName);
+    }
+
+    fn load_turn(&mut self)
+    {
+        let slot = &self.multi.slots[self.multi.turn];
+        self.name = slot.name.clone();
+        self.car = slot.car;
+    }
+
+    fn save_turn(&mut self)
+    {
+        let slot = &mut self.multi.slots[self.multi.turn];
+        slot.name = self.name.clone();
+        slot.car = self.car;
+    }
+
+    // the own name and car again
+    fn end_multi(&mut self)
+    {
+        if let Some((name, car)) = self.solo.take()
+        {
+            self.name = name;
+            self.car = car;
+        }
+        self.multi_on = false;
+    }
+
+    // "Player 2" while the players of split screen choose
+    fn turn_label(&self) -> Option<String>
+    {
+        self.multi_on.then(|| format!("Player {}", self.multi.turn + 1))
+    }
+
+    fn change_multi(&mut self, index: usize, up: bool)
+    {
+        let pads = self.gamepads.clone();
+        let multi = &mut self.multi;
+        match index
+        {
+            0 => multi.trial = !multi.trial,
+            1 =>
+            {
+                multi.players = if up { (multi.players + 1).min(MAX_PLAYERS) } else { multi.players.saturating_sub(1).max(2) };
+                multi.opponents = multi.opponents.min(MAX_CARS - multi.players);
+                multi.assign(&pads, true);
+            },
+            2 => multi.opponents = if up { (multi.opponents + 1).min(MAX_CARS - multi.players) } else { multi.opponents.saturating_sub(1) },
+            3 =>
+            {
+                let all = Difficulty::ALL;
+                let current = all.iter().position(|d| *d == multi.difficulty).unwrap_or(1);
+                multi.difficulty = all[if up { (current + 1).min(all.len() - 1) } else { current.saturating_sub(1) }];
+            },
+            index if index < MULTI_ROWS + 2 * multi.players =>
+            {
+                let player = (index - MULTI_ROWS) / 2;
+                if (index - MULTI_ROWS) % 2 == 0 { multi.cycle(player, &pads, up); return; }
+                let modes = DriveMode::ALL;
+                let current = modes.iter().position(|mode| *mode == multi.slots[player].mode).unwrap_or(1);
+                multi.slots[player].mode = modes[step(current, modes.len(), up)];
+            },
+            _ => {},
+        }
+    }
+
+    fn multi_value(&self, index: usize) -> String
+    {
+        let multi = &self.multi;
+        match index
+        {
+            0 => if multi.trial { "Time Trial" } else { "Single Race" }.to_string(),
+            1 => multi.players.to_string(),
+            2 => if multi.trial { "0".to_string() } else { multi.opponents.to_string() },
+            3 => multi.difficulty.label().to_string(),
+            index if index < MULTI_ROWS + 2 * multi.players =>
+            {
+                let slot = &multi.slots[(index - MULTI_ROWS) / 2];
+                match (index - MULTI_ROWS) % 2
+                {
+                    0 => slot.device.map_or("---".to_string(), Device::label),
+                    _ => slot.mode.label().to_string(),
+                }
+            },
+            _ => String::new(),
+        }
     }
 
     // after a cup: the main menu with its message
@@ -428,6 +646,7 @@ impl Menu
             Screen::SelectCar => frontend::VIEW_CAR_BOXES,
             Screen::CarChosen => frontend::VIEW_CAR_FLOOR,
             Screen::SelectTrack => frontend::VIEW_TRACK_SCREEN,
+            Screen::MultiSetup => frontend::VIEW_SELECT_RACE,
             Screen::Options | Screen::GameSettings | Screen::AudioSettings | Screen::VideoSettings | Screen::Controls => frontend::VIEW_OPTIONS,
             Screen::SelectCup => VIEW_CUPS + available(&self.items(), self.cursor[Screen::SelectCup as usize], true).min(3),
             Screen::CupSummary => VIEW_SUMMARY,
@@ -527,6 +746,10 @@ impl Menu
             rows.push(("Track:", format!("{}{}", track.name, variant_tag(reversed, mirrored))));
             rows.push(("Length:", format!("{:.0}m", track.length)));
         }
+        if !choice.players.is_empty()
+        {
+            rows.push(("Players:", choice.players.len().to_string()));
+        }
         else if mode == Mode::StuntArena
         {
             rows.push(("Track:", "Stunt Arena".to_string()));
@@ -536,8 +759,8 @@ impl Menu
             rows.push(("Laps:", choice.settings.laps.to_string()));
         }
         let car = cars.iter().find(|car| car.id == choice.car).map_or_else(|| choice.car.clone(), |car| car.name.clone());
-        rows.push(("Car:", car));
-        if mode == Mode::SingleRace
+        if choice.players.is_empty() { rows.push(("Car:", car)); }
+        if mode == Mode::SingleRace && choice.players.is_empty()
         {
             let level = track.map(|track| variant_key(&track.level, reversed, mirrored)).unwrap_or_default();
             rows.push(("Won Race:", if self.saved.won(&level) { "Yes" } else { "No" }.to_string()));
@@ -554,6 +777,22 @@ impl Menu
         let skip = self.screen == Screen::CarChosen && self.screen_time >= CHOSEN_SKIP && enter;
         if self.screen == Screen::CarChosen && (self.screen_time >= CHOSEN_TIME || skip)
         {
+            // split screen: the next player chooses, after the last one the track
+            if self.multi_on
+            {
+                self.save_turn();
+                if self.multi.turn + 1 < self.multi.players
+                {
+                    self.multi.turn += 1;
+                    self.load_turn();
+                    self.go(Screen::EnterName);
+                }
+                else
+                {
+                    self.go(Screen::SelectTrack);
+                }
+                return;
+            }
             match self.mode
             {
                 // the stunt arena has no track menu: straight into the stunts level
@@ -570,8 +809,14 @@ impl Menu
             return;
         }
 
-        // typing only on the name screen and the title - the other keys of the keyboard are not the menu's
-        let typing = matches!(self.screen, Screen::EnterName | Screen::Title);
+        // the gamepads of the Split Screen menu can come and go
+        if self.screen == Screen::MultiSetup
+        {
+            let pads = self.gamepads.clone();
+            self.multi.assign(&pads, false);
+        }
+        // typing only on the name screen and the title - the other keys of the keyboard are not the menu's (not while a gamepad player chooses)
+        let typing = matches!(self.screen, Screen::EnterName | Screen::Title) && self.input_device().is_none_or(Device::is_keyboard);
         let text: String = if typing { TYPED_KEYS.iter().filter(|(key, _)| keyboard.is_pressed(*key)).map(|(_, c)| *c).collect() } else { String::new() };
         // Esc stays the keyboard's - the pad goes back with B (Backspace)
         let input = Input
@@ -647,17 +892,24 @@ impl Menu
                     self.mirrored = false;
                     self.sound("tvstatic");
                 }
-                // like the game: up turns mirrored on and off, down reversed
+                // down the next direction, up the one before - the ones not converted are skipped, Normal is always reachable
                 if let Some(track) = tracks.get(self.track).filter(|_| input.up || input.down)
                 {
-                    let (reversed, mirrored) = if input.up { (self.reversed, !self.mirrored) } else { (!self.reversed, self.mirrored) };
-                    if track.variant(reversed, mirrored).is_some()
+                    let current = DIRECTIONS.iter().position(|&direction| direction == (self.reversed, self.mirrored)).unwrap_or(0);
+                    let next = (1..DIRECTIONS.len())
+                        .map(|offset| if input.down { (current + offset) % DIRECTIONS.len() } else { (current + DIRECTIONS.len() - offset) % DIRECTIONS.len() })
+                        .find(|&index| track.variant(DIRECTIONS[index].0, DIRECTIONS[index].1).is_some());
+                    if let Some(next) = next
                     {
-                        (self.reversed, self.mirrored) = (reversed, mirrored);
+                        (self.reversed, self.mirrored) = DIRECTIONS[next];
                         self.sound("menuupdown");
                     }
                 }
-                if input.enter
+                if input.enter && self.multi_on
+                {
+                    self.start_multi(cars, tracks);
+                }
+                else if input.enter
                 {
                     let track = &tracks[self.track];
                     let car = cars.get(self.car).map_or("rc".to_string(), |car| car.id.clone());
@@ -679,7 +931,29 @@ impl Menu
                         settings,
                         stunts: false,
                         cup_stage: None,
+                        players: vec![],
                     }));
+                }
+                else if back { self.back(); }
+            },
+            Screen::MultiSetup =>
+            {
+                let items = self.items();
+                let cursor = available(&items, self.cursor[Screen::MultiSetup as usize], true);
+                if input.up || input.down
+                {
+                    self.cursor[Screen::MultiSetup as usize] = available(&items, step(cursor, items.len(), input.down), input.down);
+                    self.sound("menuupdown");
+                }
+                if input.left || input.right
+                {
+                    self.change_multi(cursor, input.right);
+                    self.sound("menuleftright");
+                }
+                if input.enter
+                {
+                    if self.multi.valid(&self.gamepads) { self.sound("menunext"); self.begin_turns(); }
+                    else { self.sound("menuprev"); }
                 }
                 else if back { self.back(); }
             },
@@ -800,6 +1074,39 @@ impl Menu
         if name.is_empty() { "Player 1".to_string() } else { name.to_string() }
     }
 
+    // Enter on the track: the race of all players of split screen
+    fn start_multi(&mut self, cars: &[CarInfo], tracks: &[TrackInfo])
+    {
+        self.save_turn();
+        let track = &tracks[self.track];
+        let players: Vec<PlayerChoice> = self.multi.slots[..self.multi.players].iter().enumerate().map(|(i, slot)| PlayerChoice
+        {
+            car: cars.get(slot.car).map_or("rc".to_string(), |car| car.id.clone()),
+            name: if slot.name.trim().is_empty() { format!("Player {}", i + 1) } else { slot.name.trim().to_string() },
+            device: slot.device.unwrap_or(Device::Keyboard),
+            mode: slot.mode,
+        }).collect();
+        let count = players.len();
+        let mut settings = self.settings;
+        settings.practice = false;
+        settings.trial = self.multi.trial;
+        // time trial: only the players, no pickups - else the players and the bots of the menu
+        if self.multi.trial { settings.cars = count; settings.pickups = false; }
+        else { settings.cars = (count + self.multi.opponents).min(MAX_CARS); }
+        settings.difficulty = self.multi.difficulty;
+        self.sound("menunext");
+        self.events.push(MenuEvent::Start(RaceChoice
+        {
+            scene_id: track.variant(self.reversed, self.mirrored).unwrap_or(track.scene_id),
+            car: players[0].car.clone(),
+            player_name: players[0].name.clone(),
+            settings,
+            stunts: false,
+            cup_stage: None,
+            players,
+        }));
+    }
+
     // label and available
     fn items(&self) -> Vec<(String, bool)>
     {
@@ -809,7 +1116,19 @@ impl Menu
             Screen::Main => vec![item("Start Race", true), item("Best Trial Times", true), item("Progress Table", true), item("Options", true), item("Quit", true)],
             Screen::SelectMode => DriveMode::ALL.iter().map(|mode| item(mode.label(), true)).collect(),
             Screen::SelectCup => CUPS.iter().enumerate().map(|(i, cup)| item(cup.name, self.saved.cup_open(i))).collect(),
-            Screen::SelectRace => vec![item("Single Race", true), item("Championship", true), item("Clockwork Carnage", false), item("Time Trial", true), item("Practice", true), item("Stunt Arena", true), item("Multi-Player", false)],
+            Screen::SelectRace => vec![item("Single Race", true), item("Championship", true), item("Clockwork Carnage", false), item("Time Trial", true), item("Practice", true), item("Stunt Arena", true), item("Split Screen", true)],
+            Screen::MultiSetup =>
+            {
+                let racing = !self.multi.trial;
+                let mut items = vec![item("Game Mode", true), item("Players", true), item("Opponents", racing), item("Difficulty", racing && self.multi.opponents > 0)];
+                for i in 0..self.multi.players
+                {
+                    items.push((format!("Player {}", i + 1), true));
+                    items.push(("  Mode".to_string(), true));
+                }
+                items.push(item("Start", true));
+                items
+            },
             Screen::Options => vec![item("Game Settings", true), item("Video Settings", true), item("Audio Settings", true), item("Controller Settings", true), item("View Credits", false)],
             Screen::VideoSettings => vec![item("Fullscreen", true), item("Show FPS", true)],
             Screen::GameSettings => vec![item("Number of Cars", true), item("Number of Laps", true), item("Difficulty", true), item("Pick ups", true), item("Speed Units", true)],
@@ -887,6 +1206,7 @@ impl Menu
 
     fn select(&mut self, index: usize)
     {
+        if self.screen == Screen::SelectRace { self.end_multi(); }
         match (self.screen, index)
         {
             (Screen::Main, 0) => self.go(Screen::SelectRace),
@@ -901,6 +1221,13 @@ impl Menu
             (Screen::SelectRace, 4) => { self.mode = Mode::Practice; self.go_select_mode(); },
             (Screen::SelectMode, index) => { self.settings.mode = DriveMode::ALL[index.min(DriveMode::ALL.len() - 1)]; self.go(Screen::EnterName); },
             (Screen::SelectRace, 5) => { self.mode = Mode::StuntArena; self.go(Screen::EnterName); },
+            (Screen::SelectRace, 6) =>
+            {
+                self.multi_on = true;
+                let pads = self.gamepads.clone();
+                self.multi.assign(&pads, false);
+                self.go(Screen::MultiSetup);
+            },
             (Screen::Options, 0) => self.go(Screen::GameSettings),
             (Screen::Options, 1) => self.go(Screen::VideoSettings),
             (Screen::Options, 2) => self.go(Screen::AudioSettings),
@@ -922,6 +1249,16 @@ impl Menu
             Screen::SelectRace | Screen::Options | Screen::Quit | Screen::TrialTimes | Screen::Progress => Screen::Main,
             Screen::SelectCup => Screen::SelectCar,
             Screen::CupSummary => Screen::SelectCup,
+            Screen::MultiSetup => { self.end_multi(); Screen::SelectRace },
+            // split screen: back to the setup, or to the car of the player before
+            Screen::EnterName if self.multi_on && self.multi.turn == 0 => { self.save_turn(); Screen::MultiSetup },
+            Screen::EnterName if self.multi_on =>
+            {
+                self.save_turn();
+                self.multi.turn -= 1;
+                self.load_turn();
+                Screen::SelectCar
+            },
             Screen::EnterName if self.mode == Mode::StuntArena => Screen::SelectRace,
             Screen::EnterName => Screen::SelectMode,
             Screen::SelectMode => Screen::SelectRace,
@@ -1017,8 +1354,14 @@ impl Menu
             Screen::AudioSettings => { title(painter, "Audio Settings", Some(ICON_OPTIONS), has_icons); self.draw_items(painter, Some(100.0), 150.0); },
             Screen::VideoSettings => { title(painter, "Video Settings", Some(ICON_OPTIONS), has_icons); self.draw_items(painter, Some(100.0), 150.0); },
             Screen::Controls => { title(painter, "Controller Settings", Some(ICON_OPTIONS), has_icons); draw_controls(painter); },
-            Screen::EnterName => { title(painter, "Enter Name", Some(ICON_NAME), has_icons); self.draw_name(painter); },
-            Screen::SelectCar | Screen::CarChosen => { title(painter, "Select Car", Some(ICON_CAR), has_icons); self.draw_car(painter, cars); },
+            Screen::EnterName => { title(painter, &self.turn_label().map_or("Enter Name".to_string(), |player| format!("{player} Name")), Some(ICON_NAME), has_icons); self.draw_name(painter); },
+            Screen::SelectCar | Screen::CarChosen => { title(painter, &self.turn_label().map_or("Select Car".to_string(), |player| format!("{player} Car")), Some(ICON_CAR), has_icons); self.draw_car(painter, cars); },
+            Screen::MultiSetup =>
+            {
+                title(painter, "Split Screen", Some(ICON_RACE), has_icons);
+                self.draw_items(painter, Some(100.0), 104.0);
+                centered(painter, 460.0, CHAR_W, CHAR_H, HINT, &self.multi_hint());
+            },
             Screen::SelectTrack => { title(painter, "Select Track", Some(ICON_TRACK), has_icons); self.draw_track(painter, tracks); },
             Screen::SelectCup => { title(painter, "Select Cup", Some(ICON_CUP), has_icons); self.draw_items(painter, Some(100.0), 150.0); },
             Screen::CupSummary => { title(painter, "Summary", Some(ICON_CUP), has_icons); self.draw_summary(painter, tracks); },
@@ -1140,7 +1483,7 @@ impl Menu
         let items = self.items();
         let cursor = available(&items, self.cursor[self.screen as usize], true);
         let label_width = items.iter().map(|(label, _)| label.len()).max().unwrap_or(0) as f32 * CHAR_W;
-        let values: Vec<String> = (0..items.len()).map(|i| match self.screen { Screen::GameSettings => self.setting_value(i), Screen::AudioSettings => self.audio_value(i), Screen::VideoSettings => self.video_value(i), _ => String::new() }).collect();
+        let values: Vec<String> = (0..items.len()).map(|i| match self.screen { Screen::GameSettings => self.setting_value(i), Screen::AudioSettings => self.audio_value(i), Screen::VideoSettings => self.video_value(i), Screen::MultiSetup => self.multi_value(i), _ => String::new() }).collect();
         let value_width = values.iter().map(|v| v.len()).max().unwrap_or(0) as f32 * CHAR_W;
         let width = label_width + if value_width > 0.0 { 3.0 * CHAR_W + value_width } else { 0.0 };
         let anchor = if x.is_some() { Anchor::Left } else { Anchor::Center };
@@ -1160,11 +1503,28 @@ impl Menu
         }
     }
 
+    // the hint line of the Split Screen menu: what the row does, the keys of a shared keyboard, a missing device
+    fn multi_hint(&self) -> String
+    {
+        let cursor = available(&self.items(), self.cursor[Screen::MultiSetup as usize], true);
+        if !self.multi.valid(&self.gamepads) { return "Every player needs an input device - connect a gamepad or use fewer players".to_string(); }
+        if cursor < MULTI_ROWS || cursor >= MULTI_ROWS + 2 * self.multi.players { return "Left/Right: change   Enter: name and car of every player".to_string(); }
+        let slot = &self.multi.slots[(cursor - MULTI_ROWS) / 2];
+        if (cursor - MULTI_ROWS) % 2 == 1 { return slot.mode.hint().to_string(); }
+        match slot.device
+        {
+            Some(Device::KeyboardLeft) => "WASD drive, Space handbrake, Q fire, E reset, R recover, C camera".to_string(),
+            Some(Device::KeyboardRight) => "Arrows drive, R-Shift handbrake, R-Ctrl fire, Bksp reset, Del recover, End camera".to_string(),
+            _ => "Left/Right: input device".to_string(),
+        }
+    }
+
     // "Player 1" and the name with a blinking _ behind it (DEL / END of the wheel spelled out)
     fn draw_name(&self, painter: &mut Painter)
     {
         let (x, y) = (100.0, 120.0);
-        let label = "Player 1";
+        let label = self.turn_label().unwrap_or_else(|| "Player 1".to_string());
+        let label = label.as_str();
         let hint = "Left/Right: letter  Up: take  Down: delete  Enter: done";
         let name_x = x + label.len() as f32 * CHAR_W + 32.0;
         let width = ((label.len() + NAME_LENGTH + 3) as f32 * CHAR_W + 32.0).max(hint.len() as f32 * CHAR_W);
@@ -1236,7 +1596,12 @@ impl Menu
         };
         let direction = direction_name(self.reversed, self.mirrored);
         let laps = match self.mode { Mode::TimeTrial => "Time Trial".to_string(), Mode::Practice => "Practice - find the star".to_string(), _ => format!("{} laps, {} cars", self.settings.laps, self.settings.cars) };
-        let laps = format!("{laps}, {}", self.settings.mode.label());
+        let laps = match self.multi_on
+        {
+            true if self.multi.trial => format!("{laps}, {} players", self.multi.players),
+            true => format!("{} laps, {} players, {} bots ({})", self.settings.laps, self.multi.players, self.multi.opponents, self.multi.difficulty.label()),
+            false => format!("{laps}, {}", self.settings.mode.label()),
+        };
         let key = variant_key(&track.level, self.reversed, self.mirrored);
         let records = self.saved.tracks.get(&key);
         let best_lap = records.and_then(|r| r.best_lap.as_ref()).map_or("Best lap   -".to_string(), |r| format!("Best lap   {}  {}", format_time(r.time), r.car));

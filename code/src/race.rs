@@ -31,7 +31,7 @@ pub struct RaceSettings
     pub trial: bool,
     // the speed in the HUD: km/h, else mph like the game
     pub kmh: bool,
-    // Select Mode of the game: the driving aids of the player cars
+    // Select Mode of the game: the driving aids of the player cars (split screen: Racer.mode per player)
     pub mode: DriveMode,
 }
 
@@ -44,6 +44,9 @@ impl Default for RaceSettings
 }
 // the HUD shows wrong way only after the state held this long (s)
 const WRONG_WAY_DELAY: f32 = 1.0;
+// Junior RC: (m of lead over the best Junior RC player, share of its speed) - in between linear, beyond the last one it keeps driving that slow
+// close in front nearly full speed (it must not look slow), only out of sight it waits
+const CATCH_UP: [(f32, f32); 6] = [(-20.0, 1.0), (0.0, 0.93), (25.0, 0.9), (60.0, 0.7), (120.0, 0.45), (200.0, 0.25)];
 // d . look above this: the car looks against the track
 const WRONG_WAY_DOT: f32 = 0.6;
 // rad/s the direction arrow turns at most
@@ -78,7 +81,7 @@ const GAME_METRES: f32 = 0.5;
 
 pub enum Driver
 {
-    // the index of the local player (split screen later)
+    // the index of the local player (split screen: 0..players)
     Local(u32),
     Bot(Bot),
 }
@@ -147,7 +150,12 @@ pub struct Racer
     stall_score: f32,
     pub ahead: Option<Neighbour>,
     pub behind: Option<Neighbour>,
+    // the driving aids of a local player
+    pub mode: DriveMode,
 }
+
+// a viewport: racer index, camera id, viewport (x, y from the bottom left, width, height)
+pub type View = (usize, u32, [f32; 4]);
 
 pub struct Race
 {
@@ -171,8 +179,13 @@ pub struct Race
     watching: Option<usize>,
     // the game camera the player car drives
     cam_name: Option<String>,
-    // V: every car in a viewport of its own - racer index, camera id, viewport (x, y from the bottom left, width, height)
-    split: Vec<(usize, u32, [f32; 4])>,
+    // V: every car in a viewport of its own
+    split: Vec<View>,
+    // split screen of several local players: their viewports (the app made their cameras), the cells left over show bots
+    multi: Vec<View>,
+    empty_cells: Vec<[f32; 4]>,
+    // the bot cameras of the left over cells - removed on Stop
+    cell_cams: Vec<u32>,
     // the viewport of the player camera before
     split_restore: Option<[f32; 4]>,
     // Simulation: the wall slide of a player car before it was turned off - back on Stop
@@ -202,6 +215,7 @@ impl Racer
             laps: 0, lap_start: 0.0, last_lap: None, best_lap: None, finish_time: None, wrong_way: false, arrow: 0.0,
             speed: 0.0, speed_steps: 0.0, position: 1, sign: None, sign_timer: 0.0, sign_order: 0, ahead: None, behind: None,
             best_score: f32::MIN, stall_time: 0.0, lost_time: 0.0, stuck: assist::StuckWatch::default(), stalls: 0, stall_score: f32::MIN,
+            mode: DriveMode::default(),
         }
     }
 
@@ -235,34 +249,36 @@ impl Racer
             Driver::Local(index) => Driver::Local(*index),
             Driver::Bot(_) => Driver::Bot(Bot::new(random, difficulty)),
         };
-        // the name of the menu stays (new() takes the car name)
-        let name = std::mem::take(&mut self.name);
+        // the name of the menu and the mode stay (new() takes the car name)
+        let (name, mode) = (std::mem::take(&mut self.name), self.mode);
         *self = Self::new(self.node.clone(), driver, self.slot, start_node);
         self.name = name;
+        self.mode = mode;
     }
 }
 
 impl Race
 {
     // a level scene with track data and a start car - None otherwise (showroom, battle levels)
-    // the player drives the start car, or the car of the menu (the start car then only brings the grid)
-    pub fn start(scene: &Scene, player: Option<NodeItem>, settings: RaceSettings) -> Option<Self>
+    // the player drives the start car, or the cars of the menu (the start car then only brings the grid) - several of them in split screen
+    pub fn start(scene: &Scene, players: Vec<NodeItem>, settings: RaceSettings) -> Option<Self>
     {
         let track = Track::from_scene(scene)?;
         let start_car = find_node(&scene.nodes, &|node| node.tags.contains("revolt_start_car"))?;
         let grid = field::grid(&start_car.read().unwrap());
-        let car = player.unwrap_or(start_car);
+        let players = if players.is_empty() { vec![start_car] } else { players };
         if grid.is_empty() { console_warning!("race: no start grid on the start car - re-convert the level for opponents"); }
         if !track.has_ai() { console_warning!("race: no AI nodes - re-convert the level for opponents"); }
 
         console_log!("race: {} zones, {} position nodes, {} AI nodes, lap {:.0} m, {} laps", track.zones.len(), track.nodes.len(), track.ai.len(), track.length, settings.laps);
         let start = track.start;
+        let racers = players.into_iter().enumerate().map(|(index, car)| { let mut racer = Racer::new(car, Driver::Local(index as u32), None, start); racer.mode = settings.mode; racer }).collect();
         Some(Self
         {
             settings,
             scene_id: scene.id,
             grid,
-            racers: vec![Racer::new(car, Driver::Local(0), None, start)],
+            racers,
             track,
             ready: false,
             random: Random::default(),
@@ -273,6 +289,9 @@ impl Race
             watching: None,
             cam_name: None,
             split: vec![],
+            multi: vec![],
+            empty_cells: vec![],
+            cell_cams: vec![],
             split_restore: None,
             wall_slides: vec![],
         })
@@ -294,6 +313,33 @@ impl Race
         self.racers.iter().position(Racer::is_local).unwrap_or(0)
     }
 
+    // the racer indices of the local players, in the order of the players
+    pub fn locals(&self) -> Vec<usize>
+    {
+        let mut locals: Vec<(u32, usize)> = self.racers.iter().enumerate().filter_map(|(i, racer)| match racer.driver { Driver::Local(player) => Some((player, i)), _ => None }).collect();
+        locals.sort();
+        locals.into_iter().map(|(_, i)| i).collect()
+    }
+
+    // split screen of several local players
+    pub fn multi(&self) -> bool
+    {
+        !self.multi.is_empty()
+    }
+
+    // every local player is through (alone: the player)
+    pub fn locals_finished(&self) -> bool
+    {
+        self.racers.iter().filter(|racer| racer.is_local()).all(Racer::finished)
+    }
+
+    // the viewports of the local players (the app made their cameras) and the cells left for bots
+    pub fn set_multi(&mut self, views: Vec<View>, empty_cells: Vec<[f32; 4]>)
+    {
+        self.multi = views;
+        self.empty_cells = empty_cells;
+    }
+
     // the racer the HUD shows: the watched one, else the player
     pub fn viewed_index(&self) -> usize
     {
@@ -310,10 +356,34 @@ impl Race
         self.watching
     }
 
-    // the viewports of the split view, empty without it
-    pub fn split_views(&self) -> &[(usize, u32, [f32; 4])]
+    // the viewports of the split view or the split screen, empty without them
+    pub fn split_views(&self) -> &[View]
     {
-        &self.split
+        if self.multi.is_empty() { &self.split } else { &self.multi }
+    }
+
+    // split screen: the cells no player has show the first bots, once they are there
+    fn fill_cells(&mut self, scene: &mut Scene)
+    {
+        if self.empty_cells.is_empty() || !self.cell_cams.is_empty() { return; }
+        let bots: Vec<usize> = (0..self.racers.len()).filter(|&i| !self.racers[i].is_local()).collect();
+        if bots.is_empty() { return; }
+        let Some(&(_, main_id, _)) = self.multi.first() else { return; };
+        let Some(data) = scene.cameras.iter().find(|cam| cam.id == main_id).map(|cam| serde_json::to_value(cam.get_data()).unwrap_or_default()) else { return; };
+        // more cells than bots: the rest stays black
+        let cells = std::mem::take(&mut self.empty_cells);
+        self.empty_cells = cells.iter().skip(bots.len()).copied().collect();
+        for (cell, (view, index)) in cells.into_iter().zip(bots).enumerate()
+        {
+            let name = format!("Re-Volt cell {}", cell);
+            let id = add_camera(scene, &data, &name, view);
+            if let Some(Some(error)) = with_vehicle(scene, self.racers[index].id, |vehicle, scene| vehicle.attach_camera(scene, &name))
+            {
+                console_error!("race: split screen cell - {}", error);
+            }
+            self.cell_cams.push(id);
+            self.multi.push((index, id, view));
+        }
     }
 
     // V: every car in a viewport of its own, the player in the first one and still driving - V again goes back
@@ -341,7 +411,7 @@ impl Race
         let viewport = |key: &str, default: f64| data["viewport"][key].as_f64().unwrap_or(default) as f32;
         self.split_restore = Some([viewport("x", 0.0), viewport("y", 0.0), viewport("width", 1.0), viewport("height", 1.0)]);
         let main_id = main.id;
-        let resolution = [data["resolution_width"].as_u64().unwrap_or(1920) as u32, data["resolution_height"].as_u64().unwrap_or(1080) as u32];
+        let resolution = resolution(&data);
 
         // rows for the screen shape - 8 cars on 16:9 are 4 x 2; the player first
         let order: Vec<usize> = std::iter::once(player).chain((0..self.racers.len()).filter(|&i| i != player)).collect();
@@ -362,11 +432,7 @@ impl Race
             }
 
             let name = format!("Re-Volt view {}", cell);
-            let mut cam = Camera::new(name.clone());
-            if let Ok(copy) = serde_json::from_value(data.clone()) { cam.get_data_mut().set(copy); }
-            cam.init(view[0], view[1], view[2], view[3], resolution[0], resolution[1]);
-            let id = cam.id;
-            scene.cameras.push(Box::new(cam));
+            let id = add_camera(scene, &data, &name, view);
             if let Some(Some(error)) = with_vehicle(scene, self.racers[index].id, |vehicle, scene| vehicle.attach_camera(scene, &name))
             {
                 console_error!("race: split view - {}", error);
@@ -432,10 +498,10 @@ impl Race
         }
     }
 
-    // opponents are possible: a grid and the AI nodes
+    // opponents are possible: more cars than players, a grid and the AI nodes
     pub fn wants_opponents(&self) -> bool
     {
-        !self.ready && self.settings.cars > 1 && !self.grid.is_empty() && self.track.has_ai()
+        !self.ready && self.settings.cars > self.racers.len() && !self.grid.is_empty() && self.track.has_ai()
     }
 
     pub fn ready(&self) -> bool
@@ -468,13 +534,28 @@ impl Race
     }
 
     // no opponents (no grid or no AI nodes): the start car stays where it is
+    // split screen: the local players keep the front slots they were spawned on, so a restart puts them back there
     pub fn set_ready(&mut self)
     {
+        let grid = self.grid.len();
+        if !self.multi.is_empty()
+        {
+            for (slot, racer) in self.racers.iter_mut().filter(|racer| racer.is_local()).enumerate()
+            {
+                racer.slot = (slot < grid).then_some(slot);
+            }
+        }
         self.ready = true;
     }
 
-    // the pitches of the countdown beeps to play this frame
-    pub fn update(&mut self, scene: &mut Scene, pad: &Buttons, dt: f32) -> Vec<f32>
+    // split screen: the cells no player has and no bot fills
+    pub fn empty_cells(&self) -> &[[f32; 4]]
+    {
+        if self.ready { &self.empty_cells } else { &[] }
+    }
+
+    // the pitches of the countdown beeps to play this frame - pad: the buttons of all devices, locals: the buttons of each local player
+    pub fn update(&mut self, scene: &mut Scene, pad: &Buttons, locals: &[Buttons], dt: f32) -> Vec<f32>
     {
         let mut beeps = vec![];
         // the brake would turn into reverse at a standstill - only the handbrake holds the car
@@ -486,12 +567,14 @@ impl Race
         }
 
         self.place_on_grid(scene);
+        self.fill_cells(scene);
 
-        if pad.split
+        // watching and the split view are for one player - split screen shows the cars already
+        if self.multi.is_empty() && pad.split
         {
             self.toggle_split(scene);
         }
-        else if pad.watch && self.split.is_empty()
+        else if self.multi.is_empty() && pad.watch && self.split.is_empty()
         {
             self.watch_next(scene);
         }
@@ -527,7 +610,7 @@ impl Race
         {
             self.update_racer(scene, index, running, dt);
             // the race is over: every car brakes to a stop and stays there
-            let mut action = if running && !self.over { self.control(scene, index, pad, dt) } else { None };
+            let mut action = if running && !self.over { self.control(scene, index, locals, dt) } else { None };
             if running && !self.over && !matches!(action, Some(BotAction::Reset { .. }))
             {
                 action = self.check_stall(index, dt).or(action);
@@ -568,23 +651,42 @@ impl Race
     }
 
     // a local player drives with the bindings (Backspace puts the car back onto the track), a bot by the racing line
-    fn control(&mut self, scene: &Scene, index: usize, pad: &Buttons, dt: f32) -> Option<BotAction>
+    fn control(&mut self, scene: &Scene, index: usize, locals: &[Buttons], dt: f32) -> Option<BotAction>
     {
-        let view = view(scene, &self.racers[index]);
+        let catch_up = self.catch_up(index);
+        let view = view(scene, &self.racers[index]).map(|view| BotView { catch_up, ..view });
         let track = &self.track;
         let racer = &mut self.racers[index];
         let (finished, ai) = (racer.finished(), racer.ai);
         match &mut racer.driver
         {
             Driver::Local(_) if finished || self.watching.is_some() => None,
-            Driver::Local(_) =>
+            Driver::Local(player) =>
             {
-                if !pad.reset { return None; }
+                if !locals.get(*player as usize).is_some_and(|pad| pad.reset) { return None; }
                 ai.map(|place| bot::reset_action(track, place, 0, "by the player"))
             },
             Driver::Bot(_) if finished => None,
             Driver::Bot(bot) => view.map(|view| bot.drive(track, &view, dt)),
         }
+    }
+
+    // Junior RC: a bot ahead of the best Junior RC player that still races slows down by its lead - the player can catch up
+    fn catch_up(&self, index: usize) -> f32
+    {
+        let length = self.track.length;
+        let best = self.racers.iter()
+            .filter(|racer| matches!(racer.driver, Driver::Local(_)) && racer.mode == DriveMode::JuniorRc && !racer.finished())
+            .map(|racer| racer.score(length))
+            .fold(f32::MIN, f32::max);
+        if best == f32::MIN { return 1.0; }
+        let lead = self.racers[index].score(length) - best;
+        let (last_lead, slowest) = CATCH_UP[CATCH_UP.len() - 1];
+        if lead >= last_lead { return slowest; }
+        CATCH_UP.windows(2)
+            .find(|pair| lead < pair[1].0)
+            .map(|pair| if lead <= pair[0].0 { pair[0].1 } else { pair[0].1 + (lead - pair[0].0) / (pair[1].0 - pair[0].0) * (pair[1].1 - pair[0].1) })
+            .unwrap_or(1.0)
     }
 
     // a bot that makes no progress along the track for STALL_TIME is put back ahead - one node further each time it stalls in a row
@@ -759,8 +861,8 @@ impl Race
     // the driving aids of the mode for a local player: steering back onto the track, a steady car, no wall slide in Simulation
     fn assist(&mut self, scene: &mut Scene, index: usize, active: bool, dt: f32)
     {
-        let mode = self.settings.mode;
         let racer = &self.racers[index];
+        let mode = racer.mode;
         let id = racer.id;
         if !mode.wall_slide() && !self.wall_slides.iter().any(|(car, _)| *car == id)
         {
@@ -821,6 +923,14 @@ impl Race
         {
             self.end_split(scene);
         }
+        // split screen: the bot cameras go, the player cameras are the app's
+        for (index, cam_id, _) in std::mem::take(&mut self.multi)
+        {
+            if !self.cell_cams.contains(&cam_id) { continue; }
+            with_vehicle(scene, self.racers[index].id, |vehicle, _| vehicle.camera.enabled = false);
+            scene.delete_camera_by_id(cam_id);
+        }
+        self.cell_cams.clear();
         if self.watching.is_some()
         {
             self.watch(scene, None);
@@ -938,6 +1048,7 @@ fn view(scene: &Scene, racer: &Racer) -> Option<BotView>
         top_speed: racer.top_speed,
         wheelbase: if wheelbase.is_finite() { wheelbase.max(0.1) } else { 0.5 },
         max_steer: vehicle.steering.max_angle.to_radians(),
+        catch_up: 1.0,
     })
 }
 
@@ -966,6 +1077,38 @@ pub fn with_vehicle<R>(scene: &mut Scene, id: u32, f: impl FnOnce(&mut VehicleCo
     controllers.append(&mut scene.controller);
     scene.controller = controllers;
     result
+}
+
+// a copy of a camera (its data as json) with a viewport of its own - its id
+pub fn add_camera(scene: &mut Scene, data: &serde_json::Value, name: &str, view: [f32; 4]) -> u32
+{
+    let resolution = resolution(data);
+    let mut cam = Camera::new(name.to_string());
+    if let Ok(copy) = serde_json::from_value(data.clone()) { cam.get_data_mut().set(copy); }
+    cam.init(view[0], view[1], view[2], view[3], resolution[0], resolution[1]);
+    let id = cam.id;
+    scene.cameras.push(Box::new(cam));
+    id
+}
+
+// the viewport of a camera (its data as json): x, y, width, height
+pub fn viewport(data: &serde_json::Value) -> [f32; 4]
+{
+    let value = |key: &str, default: f64| data["viewport"][key].as_f64().unwrap_or(default) as f32;
+    [value("x", 0.0), value("y", 0.0), value("width", 1.0), value("height", 1.0)]
+}
+
+fn resolution(data: &serde_json::Value) -> [u32; 2]
+{
+    [data["resolution_width"].as_u64().unwrap_or(1920) as u32, data["resolution_height"].as_u64().unwrap_or(1080) as u32]
+}
+
+// the cells of split screen: 2 players side by side, 3-4 in 2 x 2, 5-8 in 4 x 2 - x, y from the bottom left, width, height
+pub fn split_cells(players: usize) -> Vec<[f32; 4]>
+{
+    let (columns, rows) = match players { 0 | 1 => (1, 1), 2 => (2, 1), 3 | 4 => (2, 2), _ => (4, 2) };
+    let (w, h) = (1.0 / columns as f32, 1.0 / rows as f32);
+    (0..columns * rows).map(|cell| { let (column, row) = (cell % columns, cell / columns); [column as f32 * w, 1.0 - (row + 1) as f32 * h, w, h] }).collect()
 }
 
 // drives the car instead of the input bindings, None gives them back

@@ -31,6 +31,8 @@ pub struct MaterialKey
     pub mirror_plane: i16,
     // texture animation index, -1 = none
     pub anim: i16,
+    // opaque even on a page with a color key (the aerial)
+    pub solid: bool,
 }
 
 pub struct WrittenMesh
@@ -54,6 +56,8 @@ pub struct MeshWriter<'a>
     pub material_triangles: BTreeMap<MaterialKey, usize>,
     pub inset_polygons: usize,
     pub bad_polygons: usize,
+    // the next polygons get solid materials (MaterialKey::solid)
+    pub solid: bool,
 }
 
 impl<'a> MeshWriter<'a>
@@ -69,6 +73,7 @@ impl<'a> MeshWriter<'a>
             material_triangles: BTreeMap::new(),
             inset_polygons: 0,
             bad_polygons: 0,
+            solid: false,
         }
     }
 
@@ -117,6 +122,7 @@ impl<'a> MeshWriter<'a>
             mirror: polygon.has(FACE_MIRROR),
             mirror_plane,
             anim: if polygon.has(FACE_TEXANIM) { polygon.texture } else { -1 },
+            solid: self.solid,
         };
 
         if !primitives.entry(key).or_default().add(mesh, polygon, &uvs, blend, env_color, target, self.settings.scale)
@@ -200,6 +206,7 @@ impl<'a> MeshWriter<'a>
         if key.mirror { name += "_mirror"; }
         if key.mirror_plane >= 0 { name += &key.mirror_plane.to_string(); }
         if key.anim >= 0 { name += &format!("_anim{}", key.anim); }
+        if key.solid { name += "_solid"; }
         name
     }
 
@@ -234,7 +241,7 @@ impl<'a> MeshWriter<'a>
         match key.blend
         {
             Blend::Alpha | Blend::Additive => material["alphaMode"] = json!("BLEND"),
-            Blend::Opaque if page.is_some_and(|page| page.has_alpha) =>
+            Blend::Opaque if !key.solid && page.is_some_and(|page| page.has_alpha) =>
             {
                 material["alphaMode"] = json!("MASK");
                 material["alphaCutoff"] = json!(0.5);

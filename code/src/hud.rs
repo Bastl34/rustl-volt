@@ -49,6 +49,8 @@ const PANEL_RIM: Color32 = Color32::from_rgb(0x1c, 0x2c, 0xa8);
 const PANEL_LIGHT: Color32 = Color32::from_rgb(0x64, 0x78, 0xfc);
 const PANEL_RIM_WIDTH: f32 = 2.5;
 const PANEL_RADIUS: f32 = 8.0;
+// the line between the cells of split screen, px
+const CELL_LINE: f32 = 2.0;
 // the version of the project bottom right: char size, white
 const VERSION_W: f32 = 5.0;
 const VERSION_H: f32 = 7.5;
@@ -88,8 +90,8 @@ pub struct Hud
     assets: String,
     textures: Option<Textures>,
     failed: bool,
-    // 0..1 per speed dot
-    dots: [f32; 7],
+    // 0..1 per speed dot, per racer
+    dots: Vec<[f32; 7]>,
     clock: f64,
     // the hint below the results (not while the race menu is open)
     pub hint: bool,
@@ -110,6 +112,8 @@ pub struct Painter
 {
     pub rect: Rect,
     pub scale: f32,
+    // px the rect is higher than the 480 of the game at this scale - the lower half of the screen moves down by it
+    pub extra: f32,
     pub meshes: Vec<Mesh>,
     // drawn below the meshes: rounded boxes
     pub shapes: Vec<egui::Shape>,
@@ -122,14 +126,17 @@ impl Hud
         let source = scene.source.as_ref().map(|source| source.origin_path.replace('\\', "/")).unwrap_or_default();
         let folder = source.rsplit_once('/').map(|(folder, _)| folder.to_string()).unwrap_or_default();
         let assets = if folder.is_empty() { "assets".to_string() } else { format!("{folder}/assets") };
-        Self { assets, textures: None, failed: false, dots: [0.0; 7], clock: 0.0, hint: true, version: String::new(), message: None, results: true, mirrored: scene.name.to_lowercase().ends_with("_mirrored"), show_fps: true }
+        Self { assets, textures: None, failed: false, dots: vec![], clock: 0.0, hint: true, version: String::new(), message: None, results: true, mirrored: scene.name.to_lowercase().ends_with("_mirrored"), show_fps: true }
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, race: &Race, weapons: Option<&Weapons>, fps: u32, dt: f32)
     {
         self.clock += dt as f64;
-        let racer = race.viewed();
-        self.update_dots(racer.speed_steps, dt);
+        self.dots.resize(race.racers.len(), [0.0; 7]);
+        for (index, racer) in race.racers.iter().enumerate()
+        {
+            self.update_dots(index, racer.speed_steps, dt);
+        }
 
         if self.textures.is_none() && !self.failed
         {
@@ -147,26 +154,49 @@ impl Hud
 
         let rect = ui.ctx().content_rect();
         let mut painter = Painter::new(rect, vec![textures.font.id(), textures.fx.id()]);
+        if let Some((_, left)) = self.message.as_mut()
+        {
+            *left -= dt;
+        }
+        self.message = self.message.take().filter(|(_, left)| *left > 0.0);
 
-        // split view: only place, name and lap in every viewport, the countdown and the results over all of them
+        // split view: only place, name and lap in every viewport - split screen: the whole HUD in the viewport of each player; the countdown and the results over all of them
         if !race.split_views().is_empty()
         {
             for &(index, _, [x, y, w, h]) in race.split_views()
             {
-                let cell = Rect::from_min_size(Pos2::new(rect.left() + x * rect.width(), rect.top() + (1.0 - y - h) * rect.height()), egui::vec2(w * rect.width(), h * rect.height()));
-                painter.rect = cell;
-                painter.scale = cell.height() / HEIGHT;
-                painter.split_label(&race.racers[index], race.settings.laps);
+                let cell = cell_rect(rect, [x, y, w, h]);
+                // the split view (V) keeps its labels as big as the height allows
+                match race.multi()
+                {
+                    true => painter.set_rect(cell),
+                    false => { painter.rect = cell; painter.scale = cell.height() / HEIGHT; painter.extra = 0.0; },
+                }
+                match race.multi() && race.racers[index].is_local()
+                {
+                    // split screen: the fps in the HUD of player 1 (bottom left) - top right it covered the times of the right cell
+                    true => self.draw_racer(&mut painter, race, index, weapons, (self.show_fps && index == race.player_index()).then_some(fps)),
+                    false => painter.split_label(&race.racers[index], race.settings.laps),
+                }
+                if race.multi() { painter.shapes.push(egui::Shape::rect_stroke(cell, 0.0, egui::Stroke::new(CELL_LINE, Color32::BLACK), egui::StrokeKind::Inside)); }
             }
-            painter.rect = rect;
-            painter.scale = rect.height() / HEIGHT;
-            // fps top right over all viewports
-            if self.show_fps
+            // split screen without bots: the cells nobody has stay black
+            for view in race.empty_cells()
+            {
+                painter.shapes.push(egui::Shape::rect_filled(cell_rect(rect, *view), 0.0, Color32::BLACK));
+            }
+            painter.set_rect(rect);
+            // the split view (V): fps top right over all viewports
+            if self.show_fps && !race.multi()
             {
                 painter.text(Anchor::Right, 560.0, 8.0, 8.0, 16.0, CYAN, "fps");
                 painter.text(Anchor::Right, 592.0, 8.0, 8.0, 16.0, WHITE, &fps.to_string());
             }
-            if self.results && (race.over || race.player().finished()) { painter.results(race, self.hint); }
+            if let Some((text, _)) = &self.message
+            {
+                painter.text(Anchor::Center, 320.0 - text.len() as f32 * 8.0, 80.0, 16.0, 24.0, WHITE, text);
+            }
+            if self.results && (race.over || race.locals_finished()) { painter.results(race, self.hint); }
             painter.version(&self.version);
             let countdown = painter.countdown(race, &textures.countdown, self.mirrored);
             painter.meshes.push(countdown);
@@ -174,21 +204,17 @@ impl Hud
             return;
         }
 
-        if let Some((_, left)) = self.message.as_mut()
-        {
-            *left -= dt;
-        }
-        self.message = self.message.take().filter(|(_, left)| *left > 0.0);
         if let Some((text, _)) = &self.message
         {
             painter.text(Anchor::Center, 320.0 - text.len() as f32 * 8.0, 80.0, 16.0, 24.0, WHITE, text);
         }
 
+        let racer = race.viewed();
         // practice like the game: no times, laps, position, wrong way, signs or arrow - the speed, fps and the countdown
         if race.settings.practice
         {
-            self.draw_speed(&mut painter, racer.speed, race.settings.kmh);
-            if self.show_fps
+            self.draw_speed(&mut painter, race.viewed_index(), racer.speed, race.settings.kmh);
+            if self.show_fps && !race.multi()
             {
                 painter.text(Anchor::Left, 16.0, 392.0, 8.0, 12.0, CYAN, "fps");
                 painter.text(Anchor::Left, 16.0, 404.0, 8.0, 12.0, WHITE, &fps.to_string());
@@ -200,6 +226,31 @@ impl Hud
             return;
         }
 
+        self.draw_racer(&mut painter, race, race.viewed_index(), weapons, self.show_fps.then_some(fps));
+
+        // watching another car
+        if race.watching().is_some()
+        {
+            let text = format!("Watching {} - B: next car", racer.name);
+            painter.text(Anchor::Center, 320.0 - text.len() as f32 * 8.0 * 0.5, 88.0, 8.0, 16.0, CYAN, &text);
+        }
+
+        // the places at the end - own layout, the finish display of the game is not decoded
+        if self.results && (race.over || racer.finished())
+        {
+            painter.results(race, self.hint);
+        }
+
+        painter.version(&self.version);
+        let countdown = painter.countdown(race, &textures.countdown, self.mirrored);
+        painter.meshes.push(countdown);
+        painter.finish_all(ui.ctx());
+    }
+
+    // the HUD of one racer in the rect of the painter: lap, weapon, times, wrong way, sign, place, arrow, speed, the cars around - fps if given
+    fn draw_racer(&self, painter: &mut Painter, race: &Race, index: usize, weapons: Option<&Weapons>, fps: Option<u32>)
+    {
+        let racer = &race.racers[index];
         // top left: lap, weapon frame
         painter.text(Anchor::Left, 16.0, 16.0, 8.0, 16.0, CYAN, "Lap");
         let laps = race.settings.laps;
@@ -207,7 +258,12 @@ impl Hud
         painter.sprite(1, Anchor::Left, [16.0, 56.0, 64.0, 64.0], WEAPON_FRAME_UV, alpha(FRAME_ALPHA));
         if let Some(weapons) = weapons
         {
-            if let Some(hand) = weapons.hand(race.viewed_index()) { painter.weapon(hand); }
+            if let Some(hand) = weapons.hand(index) { painter.weapon(hand); }
+        }
+        // split screen: the name of the player under the weapon
+        if race.multi()
+        {
+            painter.text(Anchor::Left, 16.0, 128.0, 8.0, 16.0, AMMO, &racer.name.chars().take(16).collect::<String>());
         }
 
         // top right: the times, labels right aligned at 624, values at 552
@@ -238,41 +294,35 @@ impl Hud
         painter.text(Anchor::Left, 16.0, 392.0, 12.0, 24.0, WHITE, &position.to_string());
         painter.text(Anchor::Left, if position < 10 { 40.0 } else { 28.0 }, 392.0, 8.0, 12.0, CYAN, suffix(position));
         painter.arrow([96.0, 396.0], 32.0, racer.arrow, alpha(SPRITE_ALPHA));
-        if self.show_fps
+        if let Some(fps) = fps
         {
             painter.text(Anchor::Left, 144.0, 392.0, 8.0, 12.0, CYAN, "fps");
             painter.text(Anchor::Left, 144.0, 404.0, 8.0, 12.0, WHITE, &fps.to_string());
         }
 
         // bottom right: speed dots and speed
-        self.draw_speed(&mut painter, racer.speed, race.settings.kmh);
+        self.draw_speed(painter, index, racer.speed, race.settings.kmh);
 
         // the cars ahead and behind - none without opponents
         painter.neighbours(racer.ahead.as_ref(), racer.behind.as_ref());
 
-        // watching another car
-        if race.watching().is_some()
+        // split screen: a player through shows place and time in the own cell until the results come (above the middle - tall cells stretch below it)
+        if race.multi() && racer.finished() && !(race.over || race.locals_finished())
         {
-            let text = format!("Watching {} - B: next car", racer.name);
-            painter.text(Anchor::Center, 320.0 - text.len() as f32 * 8.0 * 0.5, 88.0, 8.0, 16.0, CYAN, &text);
+            let place = format!("{}{}", racer.position, suffix(racer.position));
+            let time = format_time(racer.finish_time.unwrap_or(0.0));
+            painter.blue_box(Anchor::Center, [200.0, 112.0, 240.0, 116.0]);
+            painter.text(Anchor::Center, 320.0 - place.len() as f32 * 8.0, 120.0, 16.0, 32.0, AMMO, &place);
+            painter.text(Anchor::Center, 320.0 - 8.0 * 6.0, 158.0, 12.0, 24.0, CYAN, "Finished");
+            painter.text(Anchor::Center, 320.0 - time.len() as f32 * 4.0, 192.0, 8.0, 16.0, WHITE, &time);
         }
-
-        // the places at the end - own layout, the finish display of the game is not decoded
-        if self.results && (race.over || racer.finished())
-        {
-            painter.results(race, self.hint);
-        }
-
-        painter.version(&self.version);
-        let countdown = painter.countdown(race, &textures.countdown, self.mirrored);
-        painter.meshes.push(countdown);
-        painter.finish_all(ui.ctx());
     }
 
     // the scale of the exe's speedometer, in km/h or mph
-    fn draw_speed(&self, painter: &mut Painter, speed: f32, kmh: bool)
+    fn draw_speed(&self, painter: &mut Painter, index: usize, speed: f32, kmh: bool)
     {
-        for (i, fill) in self.dots.iter().enumerate()
+        let dots = self.dots.get(index).copied().unwrap_or_default();
+        for (i, fill) in dots.iter().enumerate()
         {
             let [x, y] = DOT_POSITIONS[i];
             let size = DOT_SIZES[i];
@@ -284,10 +334,11 @@ impl Hud
     }
 
     // a dot below the speed step is full, the one at it shows the fraction - up fast, down slow
-    fn update_dots(&mut self, steps: f32, dt: f32)
+    fn update_dots(&mut self, index: usize, steps: f32, dt: f32)
     {
         let full = steps.floor();
-        for (i, fill) in self.dots.iter_mut().enumerate()
+        let Some(dots) = self.dots.get_mut(index) else { return; };
+        for (i, fill) in dots.iter_mut().enumerate()
         {
             let target = if (i as f32) < full { 1.0 } else if i as f32 == full { steps.fract() } else { 0.0 };
             *fill = if *fill < target { (*fill + DOT_RISE * dt).min(target) } else { (*fill - DOT_FALL * dt).max(target) };
@@ -329,7 +380,17 @@ impl Painter
     // one mesh per texture, the default texture of egui (white) for plain colored rects
     pub fn new(rect: Rect, textures: Vec<egui::TextureId>) -> Self
     {
-        Self { rect, scale: rect.height() / HEIGHT, meshes: textures.into_iter().map(Mesh::with_texture).collect(), shapes: vec![] }
+        let mut painter = Self { rect, scale: 1.0, extra: 0.0, meshes: textures.into_iter().map(Mesh::with_texture).collect(), shapes: vec![] };
+        painter.set_rect(rect);
+        painter
+    }
+
+    // draws into this rect: scaled so that 640 x 480 fit (a narrow cell of split screen by its width), the lower half at the bottom
+    pub fn set_rect(&mut self, rect: Rect)
+    {
+        self.rect = rect;
+        self.scale = (rect.height() / HEIGHT).min(rect.width() / WIDTH);
+        self.extra = (rect.height() - HEIGHT * self.scale).max(0.0);
     }
 
     // the meshes in this order onto the background layer
@@ -462,7 +523,8 @@ impl Painter
 
     pub fn screen(&self, anchor: Anchor, x: f32, y: f32) -> Pos2
     {
-        Pos2::new(self.x(anchor, x), self.rect.top() + y * self.scale)
+        let below = if y >= HEIGHT * 0.5 { self.extra } else { 0.0 };
+        Pos2::new(self.x(anchor, x), self.rect.top() + y * self.scale + below)
     }
 
     // a rect of a 256 texel page
@@ -491,13 +553,12 @@ impl Painter
     {
         let [u, v, w, h] = ARROW_UV;
         let uvs = [[u, v], [u + w, v], [u + w, v + h], [u, v + h]];
+        // top left first, clockwise - turned clockwise by `turn`
+        let corners: Vec<Pos2> = (0..4).map(|i| { let angle = -3.0 * FRAC_PI_4 + i as f32 * 2.0 * FRAC_PI_4 + turn; self.screen(Anchor::Left, cx + radius * angle.cos(), cy + radius * angle.sin()) }).collect();
         let mesh = &mut self.meshes[1];
         let base = mesh.vertices.len() as u32;
-        for (i, [tu, tv]) in uvs.into_iter().enumerate()
+        for (position, [tu, tv]) in corners.into_iter().zip(uvs)
         {
-            // top left first, clockwise - turned clockwise by `turn`
-            let angle = -3.0 * FRAC_PI_4 + i as f32 * 2.0 * FRAC_PI_4 + turn;
-            let position = Pos2::new(self.rect.left() + (cx + radius * angle.cos()) * self.scale, self.rect.top() + (cy + radius * angle.sin()) * self.scale);
             mesh.vertices.push(egui::epaint::Vertex { pos: position, uv: Pos2::new(tu / 256.0, tv / 256.0), color });
         }
         mesh.add_triangle(base, base + 1, base + 2);
@@ -645,6 +706,12 @@ impl Painter
             (None, None) => {},
         }
     }
+}
+
+// a viewport (x, y from the bottom left, width, height - 0..1) on the screen
+fn cell_rect(rect: Rect, [x, y, w, h]: [f32; 4]) -> Rect
+{
+    Rect::from_min_size(Pos2::new(rect.left() + x * rect.width(), rect.top() + (1.0 - y - h) * rect.height()), egui::vec2(w * rect.width(), h * rect.height()))
 }
 
 pub fn alpha(alpha: u8) -> Color32

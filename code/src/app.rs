@@ -30,7 +30,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use rustl::prelude::*;
-use rustl::state::scene::components::material::{Material, MaterialData};
+use rustl::state::scene::components::material::{BlendMode, Material, MaterialData};
 use rustl::state::scene::components::transformation_animation::TransformationAnimation;
 
 use ambient::Ambient;
@@ -48,9 +48,9 @@ use rustl::input::keyboard::Key;
 use rustl::state::scene::components::component::ComponentItem;
 use music::Music;
 use object_type::ObjectType;
-use pad::Pad;
+use pad::{Buttons, Device, Pad};
 use piano::Piano;
-use race::{Race, RaceSettings};
+use race::{Race, RaceSettings, View};
 use random::Random;
 use save::SaveData;
 use setup::Setup;
@@ -65,6 +65,8 @@ use track::find_node;
 rustl::app!(Game::default());
 
 const WATER_COLOR: Vector3<f32> = Vector3::new(0.1, 0.35, 0.8);
+// see through - driving through it the view stays
+const WATER_ALPHA: f32 = 0.45;
 // one turn in 2 seconds - radians per frame at 60 fps
 const SPIN: f32 = std::f32::consts::TAU / 120.0;
 
@@ -118,15 +120,15 @@ pub struct Game
     // kept between runs (settings, records, stars) under the project name
     save: SaveData,
     save_game: String,
-    // the best lap and the finish of the player the records last saw
-    record_seen: (Option<f64>, bool),
+    // the best lap and the finish of each local player the records last saw
+    record_seen: Vec<(Option<f64>, bool)>,
     // the frame a menu race started - the Enter that started it must not open the pause menu as well
     race_started_frame: u64,
     // the championship of the menu: its cup, the table, the tries - and the table over the race
     cup: Option<Championship>,
     cup_screen: Option<CupScreen>,
-    // time trial: the laps of the player the records last saw
-    trial_laps: u32,
+    // time trial: the laps of each local player the records last saw
+    trial_laps: Vec<u32>,
     // the podium after a cup in the frontend
     ceremony: Option<podium::Ceremony>,
     // Play in the boot scene: find Re-Volt, convert, then the frontend
@@ -139,6 +141,8 @@ pub struct Game
     fullscreen_applied: Option<bool>,
     // the car of the player whose sounds are stereo (cars::set_own_car_sounds)
     own_car: Option<NodeItem>,
+    // split screen: the input device of each local player - empty for one player (all devices)
+    devices: Vec<Device>,
 }
 
 struct MenuRun
@@ -172,10 +176,13 @@ struct MenuRace
     stunts: Option<Vec<(NodeItem, bool)>>,
     // where the car of the menu started - a restart of the stunt arena puts it back there
     slot: Option<Slot>,
-    // the car of the menu when it is not the start car of the level
-    player: Option<NodeItem>,
+    // the cars of the menu when it is not the start car of the level - split screen: one per player
+    players: Vec<NodeItem>,
     // the start car, its controller and camera while the car of the menu drives
     benched: Option<(NodeItem, SceneControllerBox, String)>,
+    // split screen: the cameras of the players 2.., the camera of the start car and its viewport before
+    cameras: Vec<u32>,
+    main_view: Option<(String, [f32; 4])>,
 }
 
 impl App for Game
@@ -223,7 +230,7 @@ impl App for Game
         {
             // Play in a level scene: the defaults, only the speed units of the save
             let settings = RaceSettings { kmh: self.save.race_settings(RaceSettings::default()).kmh, ..RaceSettings::default() };
-            self.race = Race::start(scene, None, settings).map(|race| (race, Hud::new(scene)));
+            self.race = Race::start(scene, vec![], settings).map(|race| (race, Hud::new(scene)));
         }
         if let Some(run) = &mut self.menu
         {
@@ -263,13 +270,19 @@ impl App for Game
                 levels += 1;
             }
 
+            // the strip lights under the ceiling of the supermarket - their shadows on the floor looked odd
+            if ["flouro", "flourooff", "lflouro"].iter().any(|model| node.read().unwrap().tags.contains(*model))
+            {
+                for_each_node(&vec![node.clone()], &mut |part| change_material(part, |m| m.cast_shadow = false));
+            }
+
             let object_type = object_kind(&node.read().unwrap());
             match object_type
             {
                 Some(t) if t.is_water() =>
                 {
-                    // the game draws the water in code - blue until the engine has water
-                    for_each_node(&vec![node.clone()], &mut |part| change_material(part, |m| m.base_color = WATER_COLOR));
+                    // the game draws the water in code - blue and see through until the engine has water
+                    for_each_node(&vec![node.clone()], &mut |part| change_material(part, |m| { m.base_color = WATER_COLOR; m.alpha = WATER_ALPHA; m.blend_mode = BlendMode::Blend; m.cast_shadow = false; }));
                     water += 1;
                 },
                 // the automatic doors are glass - no shadow
@@ -319,6 +332,7 @@ impl App for Game
             for_each_node(&scene.nodes, &mut |node| if node.read().unwrap().tags.contains("revolt_car") { placed.push(node.clone()); });
             for car in &placed { cars::apply_level_shade(scene, car); cars::hide_pins(car); }
             for car in placed { cars::add_env_map(&mut state, &car, &assets); }
+            cars::add_instance_env_maps(&mut state, scene_id, &assets);
         }
 
         // the level of the waiting race is there
@@ -372,7 +386,7 @@ impl App for Game
             self.update_video(state);
             // no cursor while driving, also after Esc (the pause key) or a focus change released it
             let driving = self.race.is_some() || self.menu.as_ref().is_some_and(|run| run.racing.is_some());
-            state.hide_cursor = driving && !state.pause && self.setup.is_none();
+            state.hide_cursor = driving && !state.paused() && self.setup.is_none();
             // the frontend was loaded already: no scene_loaded comes, the menu starts here
             if let Some(frontend) = self.setup.as_mut().and_then(|setup| setup.update(state, &self.pad.now))
             {
@@ -384,16 +398,18 @@ impl App for Game
             self.update_race_menu(state);
             self.update_cup(state, dt);
             self.check_records(state);
-            if let Some((race, _)) = self.race.as_mut().filter(|_| !state.pause)
+            if let Some((race, _)) = self.race.as_mut().filter(|_| !state.paused())
             {
                 let pad = self.pad.now;
-                let beeps = state.scenes.iter_mut().find(|scene| scene.id == race.scene_id()).map(|scene| race.update(scene, &pad, dt)).unwrap_or_default();
+                // the buttons of each local player: alone all devices, split screen the own device
+                let locals: Vec<Buttons> = if self.devices.is_empty() { vec![pad] } else { self.devices.iter().map(|device| self.pad.device(*device)).collect() };
+                let beeps = state.scenes.iter_mut().find(|scene| scene.id == race.scene_id()).map(|scene| race.update(scene, &pad, &locals, dt)).unwrap_or_default();
                 play_pitched_at(state, "countdown", &beeps, COUNTDOWN_VOLUME);
 
                 if let Some(weapons) = self.weapons.as_mut()
                 {
-                    let fire = self.pad.now.fire;
-                    let sounds = state.scenes.iter().find(|scene| scene.id == race.scene_id()).map(|scene| weapons.update(scene, race, fire, dt)).unwrap_or_default();
+                    let fire: Vec<bool> = locals.iter().map(|buttons| buttons.fire).collect();
+                    let sounds = state.scenes.iter().find(|scene| scene.id == race.scene_id()).map(|scene| weapons.update(scene, race, &fire, dt)).unwrap_or_default();
                     for (name, pitch) in sounds
                     {
                         play_pitched(state, name, &[pitch]);
@@ -411,7 +427,7 @@ impl App for Game
         self.animated.update(&context.state.borrow());
         {
             let state = context.state.borrow();
-            if !state.pause
+            if !state.paused()
             {
                 let dt = frame_seconds(&state);
                 self.lasers.update(&state, dt);
@@ -444,7 +460,7 @@ impl App for Game
             return;
         }
         let show_fps = self.video().show_fps;
-        let dt = if state.pause { 0.0 } else { frame_seconds(&state) };
+        let dt = if state.paused() { 0.0 } else { frame_seconds(&state) };
         let version = format!("{} v{}", state.project.name.trim(), state.project.version.trim());
         if let Some((race, hud)) = self.race.as_mut()
         {
@@ -571,7 +587,8 @@ impl Game
                 None => field::pick(&car, rating, &mut Random::default()),
             };
             let assets = assets_folder(scene);
-            let count = race.settings.cars.saturating_sub(1).min(race.grid().len().saturating_sub(1));
+            let locals = race.locals().len();
+            let count = race.settings.cars.saturating_sub(locals).min(race.grid().len().saturating_sub(locals));
             let grid = race.grid().to_vec();
             console_log!("field: {} (rating {}), {} opponents", car, rating, count);
 
@@ -636,13 +653,13 @@ impl Game
         }
     }
 
-    // the sounds of the driven car are stereo (race, stunt arena) - the car before gets its spatial ones back
+    // the sounds of the driven car are stereo (race, stunt arena) - the car before gets its spatial ones back; split screen: all spatial, every camera hears its cars
     fn update_own_car(&mut self, state: &State)
     {
         let car = match (&self.race, self.menu.as_ref().and_then(|run| run.racing.as_ref()))
         {
-            (Some((race, _)), _) => Some(race.player().node.clone()),
-            (None, Some(racing)) => racing.player.clone().or_else(|| state.find_scene_by_id(racing.scene_id).and_then(|scene| find_node(&scene.nodes, &|node| node.tags.contains("revolt_start_car")))),
+            (Some((race, _)), _) => (!race.multi()).then(|| race.player().node.clone()),
+            (None, Some(racing)) => racing.players.first().cloned().or_else(|| state.find_scene_by_id(racing.scene_id).and_then(|scene| find_node(&scene.nodes, &|node| node.tags.contains("revolt_start_car")))),
             _ => None,
         };
         let same = |a: &NodeItem, b: &NodeItem| Arc::ptr_eq(a, b);
@@ -655,7 +672,7 @@ impl Game
     // the pause menu pauses the sounds of the active scenes (engines, skids, 3D sounds) and starts them again after it
     fn pause_sounds(&mut self, state: &State)
     {
-        match (state.pause, self.paused_sounds.is_some())
+        match (state.paused(), self.paused_sounds.is_some())
         {
             (true, false) =>
             {
@@ -729,9 +746,9 @@ impl Game
         {
             let Some(stars) = racing.stunts.as_mut() else { return; };
             let mut taken = 0;
-            if !state.pause
+            if !state.paused()
             {
-                let car = racing.player.clone().or_else(|| state.find_scene_by_id(racing.scene_id).and_then(|scene| find_node(&scene.nodes, &|node| node.tags.contains("revolt_start_car"))));
+                let car = racing.players.first().cloned().or_else(|| state.find_scene_by_id(racing.scene_id).and_then(|scene| find_node(&scene.nodes, &|node| node.tags.contains("revolt_start_car"))));
                 if let Some(car) = car.and_then(|car| node_position(&car))
                 {
                     for (index, (star, done)) in stars.iter_mut().enumerate().filter(|(_, (_, done))| !*done)
@@ -773,7 +790,7 @@ impl Game
                     {
                         let assets = state.find_scene_by_id(scene_id).map(|scene| assets_folder(scene)).unwrap_or_default();
                         self.race_menu = Some(RaceMenu::new(RaceMenuKind::Stunts, &assets, true));
-                        state.pause = true;
+                        state.game_pause = true;
                         play_pitched(state, "menunext", &[MENU_SOUND_SPEED]);
                     }
                     None
@@ -781,7 +798,7 @@ impl Game
             };
             let Some(action) = action else { return; };
             self.race_menu = None;
-            state.pause = false;
+            state.game_pause = false;
             match action
             {
                 RaceAction::Restart => self.restart_stunts(state),
@@ -813,7 +830,10 @@ impl Game
             run.tracks = menu::load_tracks(state, &mut run.track_cache);
             run.tracks_dirty = false;
         }
-        run.menu.update(&mut state.io.input_manager.keyboard, &self.pad.now, &run.cars, &run.tracks, dt);
+        // split screen: the player choosing name and car steers the menu with the own device
+        run.menu.gamepads = state.io.input_manager.gamepads.values().filter(|gamepad| gamepad.connected).map(|gamepad| gamepad.id).collect();
+        let buttons = run.menu.input_device().map_or(self.pad.now, |device| self.pad.device(device));
+        run.menu.update(&mut state.io.input_manager.keyboard, &buttons, &run.cars, &run.tracks, dt);
         // name, settings and audio options are kept as soon as they change
         if run.menu.store(&mut self.save)
         {
@@ -843,7 +863,7 @@ impl Game
                     let scene = state.scenes.iter().find(|scene| scene.name.eq_ignore_ascii_case("stunts"));
                     match scene
                     {
-                        Some(scene) => start = Some(RaceChoice { scene_id: scene.id, car, player_name, settings: RaceSettings::default(), stunts: true, cup_stage: None }),
+                        Some(scene) => start = Some(RaceChoice { scene_id: scene.id, car, player_name, settings: RaceSettings::default(), stunts: true, cup_stage: None, players: vec![] }),
                         None => { console_warning!("menu: no stunts scene in the project - convert the stunts level"); },
                     }
                 },
@@ -878,7 +898,7 @@ impl Game
             self.end_championship(state, None, vec!["TRACK MISSING".to_string(), format!("CONVERT {}", name.to_uppercase())]);
             return;
         };
-        let choice = RaceChoice { scene_id, car: cup.car.clone(), player_name: cup.player_name.clone(), settings: cup.race_settings(), stunts: false, cup_stage: Some((cup.stage, cup.stages())) };
+        let choice = RaceChoice { scene_id, car: cup.car.clone(), player_name: cup.player_name.clone(), settings: cup.race_settings(), stunts: false, cup_stage: Some((cup.stage, cup.stages())), players: vec![] };
         let racing = self.menu.as_mut().and_then(|run| run.racing.take());
         self.leave_race(state, racing);
         if let Some(mut music) = self.music.take()
@@ -992,53 +1012,46 @@ impl Game
         }
         state.set_active_scene(scene_id);
         self.race_started_frame = self.frames;
-        self.trial_laps = 0;
+        self.trial_laps.clear();
+        self.record_seen.clear();
+        self.devices.clear();
         // one level at a time - the ones of earlier races go
         self.unload_game_scenes(state, Some(scene_id));
-        console_log!("menu: race on scene {} with {} ({:?})", scene_id, choice.car, choice.settings);
+        console_log!("menu: race on scene {} with {} ({:?}), {} players", scene_id, choice.car, choice.settings, choice.players.len().max(1));
 
-        let mut racing = MenuRace { scene_id, stunts: None, slot: None, player: None, benched: None };
-        let Some(scene) = state.find_scene_by_id_mut(scene_id) else { return; };
-        let assets = assets_folder(scene);
-        if let Some(start_car) = find_node(&scene.nodes, &|node| node.tags.contains("revolt_start_car"))
-        {
-            let start_id = start_car.read().unwrap().extras.get::<String>("revolt_car").cloned().unwrap_or_default();
-            if start_id != choice.car
-            {
-                // the slot the race gives the player: behind the opponents - not on one of them
-                let grid = field::grid(&start_car.read().unwrap());
-                let opponents = if choice.stunts { 0 } else { choice.settings.cars.saturating_sub(1).min(grid.len().saturating_sub(1)) };
-                let slot = grid.get(opponents).copied().unwrap_or_else(||
-                {
-                    let position = start_car.read().unwrap().find_component::<Transformation>().map(|t| { component_downcast!(t, Transformation); t.get_data().position }).unwrap_or_default();
-                    Slot { floor: position, heading: -Vector3::z() }
-                });
-                racing.slot = Some(slot);
-                if let Some((controller, cam_name)) = field::bench_start_car(scene, &start_car)
-                {
-                    match field::spawn_player(state, scene_id, &assets, &choice.car, slot, &cam_name)
-                    {
-                        Ok(player) =>
-                        {
-                            racing.player = Some(player);
-                            racing.benched = Some((start_car, controller, cam_name));
-                        },
-                        Err(error) =>
-                        {
-                            console_warning!("menu: {} - the start car drives", error);
-                            if let Some(scene) = state.find_scene_by_id_mut(scene_id) { field::unbench_start_car(scene, &start_car, controller, &cam_name); }
-                        },
-                    }
-                }
-            }
-        }
+        let mut racing = MenuRace { scene_id, stunts: None, slot: None, players: vec![], benched: None, cameras: vec![], main_view: None };
+        let multi = !choice.players.is_empty();
+        // split screen: the cells of the players, the ones left over show bots
+        let cells = if multi { race::split_cells(choice.players.len()) } else { vec![] };
+        self.spawn_players(state, &choice, &cells, &mut racing);
 
         let Some(scene) = state.find_scene_by_id(scene_id) else { return; };
-        self.race = Race::start(scene, racing.player.clone(), choice.settings).map(|race| (race, Hud::new(scene)));
+        self.race = Race::start(scene, racing.players.clone(), choice.settings).map(|race| (race, Hud::new(scene)));
+        let main_cam = racing.main_view.as_ref().and_then(|(name, _)| scene.cameras.iter().find(|cam| cam.name == *name)).map(|cam| cam.id);
         if let Some((race, _)) = self.race.as_mut()
         {
-            let index = race.player_index();
-            race.racers[index].name = choice.player_name.clone();
+            let locals = race.locals();
+            match (multi && locals.len() == choice.players.len(), main_cam)
+            {
+                (true, Some(main_cam)) =>
+                {
+                    let cams: Vec<u32> = std::iter::once(main_cam).chain(racing.cameras.iter().copied()).collect();
+                    let mut views: Vec<View> = vec![];
+                    for (player, (&index, chosen)) in locals.iter().zip(&choice.players).enumerate()
+                    {
+                        race.racers[index].name = chosen.name.clone();
+                        race.racers[index].mode = chosen.mode;
+                        views.push((index, cams[player], cells[player]));
+                    }
+                    race.set_multi(views, cells[locals.len()..].to_vec());
+                    self.devices = choice.players.iter().map(|player| player.device).collect();
+                },
+                _ =>
+                {
+                    let index = race.player_index();
+                    race.racers[index].name = choice.player_name.clone();
+                },
+            }
         }
         self.music = Music::start(state, scene_id);
         if self.race.is_none() && choice.stunts
@@ -1074,6 +1087,72 @@ impl Game
         }
     }
 
+    // the cars of the menu instead of the start car (it brings the grid): behind the opponents, split screen one per player with an own camera and the bindings of the own device
+    fn spawn_players(&mut self, state: &mut State, choice: &RaceChoice, cells: &[[f32; 4]], racing: &mut MenuRace)
+    {
+        let scene_id = choice.scene_id;
+        let multi = !choice.players.is_empty();
+        let Some(scene) = state.find_scene_by_id_mut(scene_id) else { return; };
+        let assets = assets_folder(scene);
+        let Some(start_car) = find_node(&scene.nodes, &|node| node.tags.contains("revolt_start_car")) else { return; };
+        let start_id = start_car.read().unwrap().extras.get::<String>("revolt_car").cloned().unwrap_or_default();
+        if start_id == choice.car && !multi { return; }
+
+        // the slots the race gives the players: behind the opponents - not on one of them
+        let cars: Vec<(String, Option<Device>)> = if multi { choice.players.iter().map(|player| (player.car.clone(), Some(player.device))).collect() } else { vec![(choice.car.clone(), None)] };
+        let grid = field::grid(&start_car.read().unwrap());
+        let opponents = if choice.stunts { 0 } else { choice.settings.cars.saturating_sub(cars.len()).min(grid.len().saturating_sub(cars.len())) };
+        let start_slot = || { let position = start_car.read().unwrap().find_component::<Transformation>().map(|t| { component_downcast!(t, Transformation); t.get_data().position }).unwrap_or_default(); Slot { floor: position, heading: -Vector3::z() } };
+        let slots: Vec<Slot> = (0..cars.len()).map(|i| grid.get(opponents + i).copied().unwrap_or_else(start_slot)).collect();
+        racing.slot = slots.first().copied();
+        let Some((controller, cam_name)) = field::bench_start_car(scene, &start_car) else { return; };
+
+        // split screen: player 1 has the camera of the start car, the others copies of it
+        if multi
+        {
+            if let Some(cam) = scene.get_game_camera_mut(&cam_name)
+            {
+                let data = rustl::serde_json::to_value(cam.get_data()).unwrap_or_default();
+                racing.main_view = Some((cam_name.clone(), race::viewport(&data)));
+                let [x, y, w, h] = cells[0];
+                cam.update_viewport(x, y, w, h);
+                for (i, cell) in cells.iter().enumerate().take(cars.len()).skip(1)
+                {
+                    racing.cameras.push(race::add_camera(scene, &data, &format!("Re-Volt player {}", i + 1), *cell));
+                }
+            }
+        }
+
+        let mut error = None;
+        for (i, ((car, device), slot)) in cars.iter().zip(&slots).enumerate()
+        {
+            let cam = if i == 0 { cam_name.clone() } else { format!("Re-Volt player {}", i + 1) };
+            match field::spawn_player(state, scene_id, &assets, car, i, *slot, &cam)
+            {
+                Ok(node) =>
+                {
+                    let id = node.read().unwrap().id;
+                    if let (Some(device), Some(scene)) = (device, state.find_scene_by_id_mut(scene_id)) { race::with_vehicle(scene, id, |vehicle, _| vehicle.controls = device.controls()); }
+                    racing.players.push(node);
+                },
+                Err(text) => { error = Some(text); break; },
+            }
+        }
+        let Some(scene) = state.find_scene_by_id_mut(scene_id) else { return; };
+        match error
+        {
+            None => racing.benched = Some((start_car, controller, cam_name)),
+            Some(error) =>
+            {
+                console_warning!("menu: {} - the start car drives", error);
+                field::remove_players(scene, &racing.players);
+                racing.players.clear();
+                remove_player_cameras(scene, racing);
+                field::unbench_start_car(scene, &start_car, controller, &cam_name);
+            },
+        }
+    }
+
     // back from a race of the menu to the frontend
     fn end_menu_race(&mut self, state: &mut State)
     {
@@ -1094,7 +1173,7 @@ impl Game
     // Enter after the finish, Esc in a race of the menu: the race menu (a pause stops the race meanwhile)
     fn update_race_menu(&mut self, state: &mut State)
     {
-        let Some((scene_id, done)) = self.race.as_ref().map(|(race, _)| (race.scene_id(), race.over || race.player().finished())) else
+        let Some((scene_id, done)) = self.race.as_ref().map(|(race, _)| (race.scene_id(), race.over || race.locals_finished())) else
         {
             let stunts = self.menu.as_ref().and_then(|run| run.racing.as_ref()).is_some_and(|racing| racing.stunts.is_some());
             if !stunts { self.race_menu = None; }
@@ -1137,7 +1216,7 @@ impl Game
                 {
                     let assets = state.find_scene_by_id(scene_id).map(|scene| assets_folder(scene)).unwrap_or_default();
                     self.race_menu = Some(RaceMenu::new(kind, &assets, self.menu.is_some()));
-                    state.pause = matches!(kind, RaceMenuKind::Pause | RaceMenuKind::Championship);
+                    state.game_pause = matches!(kind, RaceMenuKind::Pause | RaceMenuKind::Championship);
                     play_pitched(state, "menunext", &[MENU_SOUND_SPEED]);
                 }
                 None
@@ -1145,7 +1224,7 @@ impl Game
         };
         let Some(action) = action else { return; };
         self.race_menu = None;
-        state.pause = false;
+        state.game_pause = false;
         match action
         {
             RaceAction::Resume => {},
@@ -1166,7 +1245,7 @@ impl Game
     {
         let Some((race, _)) = self.race.as_mut() else { return; };
         race.restart();
-        self.trial_laps = 0;
+        self.trial_laps.clear();
         for (star, found) in &mut self.practice_stars
         {
             *found = false;
@@ -1185,7 +1264,7 @@ impl Game
     {
         let Some(racing) = self.menu.as_mut().and_then(|run| run.racing.as_mut()) else { return; };
         let Some(scene) = state.find_scene_by_id_mut(racing.scene_id) else { return; };
-        let Some(car) = racing.player.clone().or_else(|| find_node(&scene.nodes, &|node| node.tags.contains("revolt_start_car"))) else { return; };
+        let Some(car) = racing.players.first().cloned().or_else(|| find_node(&scene.nodes, &|node| node.tags.contains("revolt_start_car"))) else { return; };
         let slot = racing.slot.or_else(|| field::grid(&car.read().unwrap()).first().copied());
         let Some(slot) = slot else { return; };
         let id = car.read().unwrap().id;
@@ -1215,7 +1294,7 @@ impl Game
     fn leave_race(&mut self, state: &mut State, racing: Option<MenuRace>)
     {
         self.race_menu = None;
-        state.pause = false;
+        state.game_pause = false;
         for (star, _) in self.practice_stars.drain(..)
         {
             star.write().unwrap().settings.visible = true;
@@ -1244,17 +1323,19 @@ impl Game
             }
             if let Some(scene) = state.scenes.iter_mut().find(|scene| scene.id == racing.scene_id)
             {
-                if let Some(player) = &racing.player { field::remove_player(scene, player); }
+                field::remove_players(scene, &racing.players);
+                remove_player_cameras(scene, &racing);
                 if let Some((car, controller, cam_name)) = racing.benched { field::unbench_start_car(scene, &car, controller, &cam_name); }
             }
         }
         self.opponents.clear();
+        self.devices.clear();
     }
 
     // practice: the player car near a practice star finds it (the game shows that for 2 s)
     fn find_practice_stars(&mut self, state: &mut State)
     {
-        if self.practice_stars.is_empty() || state.pause { return; }
+        if self.practice_stars.is_empty() || state.paused() { return; }
         let Some((race, hud)) = self.race.as_mut() else { return; };
         let Some(car) = node_position(&race.player().node) else { return; };
         let mut found = 0;
@@ -1280,62 +1361,68 @@ impl Game
         play_pitched(state, "pickup", &[1.0]);
     }
 
-    // a new best lap or race time of the player is kept per track (not in practice) and shown for 2 s
+    // a new best lap or race time of a local player is kept per track (not in practice) and shown for 2 s - split screen with the name in front,
+    // the progress (won race, challenge times) only alone
     fn check_records(&mut self, state: &State)
     {
         let Some((race, hud)) = self.race.as_mut() else { return; };
         if race.settings.practice { return; }
-        let player = race.player();
-        // time trial: every lap into the Best Trial Times, the challenge lap time of the track (the Progress Table)
-        if race.settings.trial && player.laps != self.trial_laps
-        {
-            self.trial_laps = player.laps;
-            if let Some(lap) = player.last_lap.filter(|_| player.laps > 0)
-            {
-                let track = state.find_scene_by_id(race.scene_id()).map(|scene| scene.name.to_lowercase()).unwrap_or_default();
-                let car = player.node.read().unwrap().extras.get::<String>("revolt_car").cloned().unwrap_or_default();
-                let place = self.save.record_trial(&track, lap, &car, &player.name);
-                let level = track.trim_end_matches("_mirrored").trim_end_matches("_reversed");
-                let (reversed, mirrored) = (track.contains("_reversed"), track.ends_with("_mirrored"));
-                let challenge = cup::LEVELS.iter().find(|(l, ..)| *l == level).map(|(_, _, normal, back)| if reversed && !mirrored { *back } else { *normal });
-                if challenge.is_some_and(|time| lap < time) && self.save.challenges.insert(track.clone())
-                {
-                    hud.message = Some(("Challenge Time Beaten!".to_string(), PRACTICE_MESSAGE_TIME));
-                }
-                else if place == Some(0)
-                {
-                    hud.message = Some(("New best trial time!".to_string(), PRACTICE_MESSAGE_TIME));
-                }
-                self.save.store(&self.save_game);
-                if let Some(run) = self.menu.as_mut() { run.menu.saved = self.save.clone(); }
-            }
-        }
-        let seen = (player.best_lap, player.finish_time.is_some());
-        if seen == self.record_seen { return; }
-        self.record_seen = seen;
-
+        let locals = race.locals();
+        let multi = locals.len() > 1;
+        self.trial_laps.resize(locals.len(), 0);
+        self.record_seen.resize(locals.len(), (None, false));
         let track = state.find_scene_by_id(race.scene_id()).map(|scene| scene.name.to_lowercase()).unwrap_or_default();
-        let car = player.node.read().unwrap().extras.get::<String>("revolt_car").cloned().unwrap_or_default();
         let mut changed = false;
-        if let Some(time) = player.best_lap.filter(|_| !track.is_empty())
+        for (local, &index) in locals.iter().enumerate()
         {
-            if self.save.record_lap(&track, time, &car, &player.name)
+            let player = &race.racers[index];
+            let label = |text: &str| if multi { format!("{}: {text}", player.name) } else { text.to_string() };
+            let car = player.node.read().unwrap().extras.get::<String>("revolt_car").cloned().unwrap_or_default();
+            // time trial: every lap into the Best Trial Times, the challenge lap time of the track (the Progress Table)
+            if race.settings.trial && player.laps != self.trial_laps[local]
             {
-                changed = true;
-                hud.message = Some(("New best lap!".to_string(), PRACTICE_MESSAGE_TIME));
+                self.trial_laps[local] = player.laps;
+                if let Some(lap) = player.last_lap.filter(|_| player.laps > 0)
+                {
+                    let place = self.save.record_trial(&track, lap, &car, &player.name);
+                    let level = track.trim_end_matches("_mirrored").trim_end_matches("_reversed");
+                    let (reversed, mirrored) = (track.contains("_reversed"), track.ends_with("_mirrored"));
+                    let challenge = cup::LEVELS.iter().find(|(l, ..)| *l == level).map(|(_, _, normal, back)| if reversed && !mirrored { *back } else { *normal });
+                    if !multi && challenge.is_some_and(|time| lap < time) && self.save.challenges.insert(track.clone())
+                    {
+                        hud.message = Some((label("Challenge Time Beaten!"), PRACTICE_MESSAGE_TIME));
+                    }
+                    else if place == Some(0)
+                    {
+                        hud.message = Some((label("New best trial time!"), PRACTICE_MESSAGE_TIME));
+                    }
+                    changed = true;
+                }
             }
-        }
-        if let Some(time) = player.finish_time.filter(|_| !track.is_empty())
-        {
-            if self.save.record_race(&track, race.settings.laps, time, &car, &player.name)
+            let seen = (player.best_lap, player.finish_time.is_some());
+            if seen == self.record_seen[local] { continue; }
+            self.record_seen[local] = seen;
+
+            if let Some(time) = player.best_lap.filter(|_| !track.is_empty())
             {
-                changed = true;
-                hud.message = Some(("New track record!".to_string(), PRACTICE_MESSAGE_TIME));
+                if self.save.record_lap(&track, time, &car, &player.name)
+                {
+                    changed = true;
+                    hud.message = Some((label("New best lap!"), PRACTICE_MESSAGE_TIME));
+                }
             }
-            // first against others - alone is no win
-            if player.position == 1 && race.racers.len() > 1 && self.save.record_win(&track)
+            if let Some(time) = player.finish_time.filter(|_| !track.is_empty())
             {
-                changed = true;
+                if self.save.record_race(&track, race.settings.laps, time, &car, &player.name)
+                {
+                    changed = true;
+                    hud.message = Some((label("New track record!"), PRACTICE_MESSAGE_TIME));
+                }
+                // first against others - alone is no win
+                if !multi && player.position == 1 && race.racers.len() > 1 && self.save.record_win(&track)
+                {
+                    changed = true;
+                }
             }
         }
         if !changed { return; }
@@ -1350,7 +1437,8 @@ impl Game
         let source = |name: &str| state.resources.sound_sources.values().find(|source| source.read().unwrap().name == name).cloned();
         let (Some(soft), Some(hard)) = (source("hit1"), source("hit2")) else { return; };
 
-        // the speed and, for a bot, its node - the bots sound at their car, the player car is heard everywhere
+        // the speed and, for a bot, its node - the bots sound at their car, the player car is heard everywhere; split screen: every car at its place
+        let multi = self.race.as_ref().is_some_and(|(race, _)| race.multi());
         let mut hits: Vec<(f32, Option<NodeItem>)> = vec![];
         for scene in &state.scenes
         {
@@ -1361,7 +1449,7 @@ impl Game
                 if self.last_hit.get(&vehicle).is_some_and(|frame| self.frames - frame < HIT_COOLDOWN_FRAMES) { continue; }
 
                 self.last_hit.insert(vehicle, self.frames);
-                let bot = scene.find_node_by_id(vehicle).filter(|node| node.read().unwrap().tags.contains(field::BOT_TAG));
+                let bot = scene.find_node_by_id(vehicle).filter(|node| multi || node.read().unwrap().tags.contains(field::BOT_TAG));
                 hits.push((contact.impact_speed, bot));
             }
         }
@@ -1387,6 +1475,19 @@ impl Game
                 None => state.play_one_shot_sound_source(if hard_hit { hard.clone() } else { soft.clone() }, volume),
             }
         }
+    }
+}
+
+// split screen: the cameras of the players 2.. go, the camera of the start car gets its viewport back
+fn remove_player_cameras(scene: &mut Scene, racing: &MenuRace)
+{
+    for id in &racing.cameras
+    {
+        scene.delete_camera_by_id(*id);
+    }
+    if let Some((name, [x, y, w, h])) = &racing.main_view
+    {
+        if let Some(cam) = scene.get_game_camera_mut(name) { cam.update_viewport(*x, *y, *w, *h); }
     }
 }
 
@@ -1492,7 +1593,7 @@ fn play_pitched_at(state: &mut State, name: &str, pitches: &[f32], volume: f32)
 }
 
 // every node below the given ones, depth first
-fn for_each_node(nodes: &Vec<NodeItem>, f: &mut dyn FnMut(&NodeItem))
+pub fn for_each_node(nodes: &Vec<NodeItem>, f: &mut dyn FnMut(&NodeItem))
 {
     for node in nodes
     {

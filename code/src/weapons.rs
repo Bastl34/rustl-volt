@@ -12,7 +12,7 @@ use rustl::state::scene::components::transformation::{Transformation, Transforma
 use rustl::state::scene::scene_controller::vehicle_controller::VehicleController;
 
 use crate::object_type::ObjectType;
-use crate::race::{Race, Racer};
+use crate::race::{Driver, Race, Racer};
 use crate::random::Random;
 
 pub const WEAPON_COUNT: usize = 11;
@@ -188,7 +188,8 @@ impl Weapons
         self.hands.get(racer)
     }
 
-    pub fn update(&mut self, scene: &Scene, race: &Race, fire: bool, dt: f32) -> Sounds
+    // fire: per local player
+    pub fn update(&mut self, scene: &Scene, race: &Race, fire: &[bool], dt: f32) -> Sounds
     {
         let mut sounds = vec![];
         let boxes: Vec<(Vector3<f32>, Vector3<f32>, Vector3<f32>)> = race.racers.iter().map(|racer| car_box(scene, racer)).collect();
@@ -282,10 +283,10 @@ impl Weapons
         {
             let Some(hand) = self.hands.get_mut(index) else { continue; };
             if hand.weapon.is_none() { continue; }
-            match racer.is_local()
+            match &racer.driver
             {
-                true => if fire { hand.fire(&racer.name); },
-                false =>
+                Driver::Local(player) => if fire.get(*player as usize).copied().unwrap_or(false) { hand.fire(&racer.name); },
+                Driver::Bot(_) =>
                 {
                     hand.fire_in -= dt;
                     if hand.fire_in <= 0.0

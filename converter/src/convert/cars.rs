@@ -270,6 +270,8 @@ pub fn convert(settings: &Settings, car: &str, log: &Log) -> Result<ConvertedCar
     {
         let length = aerial.float("Length").unwrap_or(0.0);
         let mut parts = vec![];
+        // the aerial uvs are the same on every car page - on some (mite) they hit the black color key, the mask would cut it away
+        writer.solid = true;
         if let Some(mesh) = model_num(aerial, "SecModelNum").and_then(|n| mesh_of(n, false, &mut glb, &mut writer))
         {
             parts.push(glb.node(json!({ "name": "aerial_section", "mesh": mesh, "scale": [1.0, length, 1.0], "extras": { "rustl_collision": false } })));
@@ -278,6 +280,7 @@ pub fn convert(settings: &Settings, car: &str, log: &Log) -> Result<ConvertedCar
         {
             parts.push(glb.node(json!({ "name": "aerial_top", "mesh": mesh, "translation": [0.0, length * scale, 0.0], "extras": { "rustl_collision": false } })));
         }
+        writer.solid = false;
         if !parts.is_empty()
         {
             let direction = to_gltf(aerial.vec3("Direction").unwrap_or([0.0, -1.0, 0.0]));

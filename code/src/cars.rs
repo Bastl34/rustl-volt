@@ -10,6 +10,7 @@ use rustl::state::scene::node::{NodeSettings, PhysicsBodyType, PhysicsSettings, 
 use rustl::state::scene::scene_controller::scene_controller::SceneController;
 use rustl::state::scene::components::material::{Material, TextureType};
 use rustl::state::scene::components::sound::{Sound, SoundType};
+use crate::for_each_node;
 use rustl::state::scene::scene_controller::vehicle::engine::EngineType;
 use rustl::state::scene::scene_controller::vehicle::engine_sound::EngineSoundLayer;
 use rustl::state::scene::scene_controller::vehicle_controller::{VehicleController, VehicleDrive, VehicleType, VehicleWheel};
@@ -667,6 +668,46 @@ pub fn add_env_map(state: &mut State, car: &NodeItem, assets: &str)
         material.set_texture(texture.clone(), TextureType::Environment);
         material.get_data_mut().get_mut().reflectivity = strength;
     }
+}
+
+// the level models with the ENV flag of the .fin (frontend: ufo stand, poster stands, sale bin) get the env map of the level, strength by their env color
+pub fn add_instance_env_maps(state: &mut State, scene_id: u32, assets: &str)
+{
+    let Some(scene) = state.find_scene_by_id(scene_id) else { return; };
+    let level = crate::track::find_node(&scene.nodes, &|node| node.tags.contains("revolt_level") && node.extras.contains("env_map"));
+    let map = level.and_then(|level| level.read().unwrap().extras.get::<String>("env_map").cloned()).unwrap_or_else(|| "gfx/envstill.png".to_string());
+    let mut instances = vec![];
+    for_each_node(&scene.nodes, &mut |node|
+    {
+        let node_ref = node.read().unwrap();
+        let env = number(&node_ref, "revolt_fin_flags").is_some_and(|flags| flags as u32 & 1 != 0);
+        let color = node_ref.extras.get::<String>("revolt_env_color").and_then(|hex| u32::from_str_radix(hex, 16).ok());
+        if let (true, Some(color)) = (env, color) { instances.push((node.clone(), color)); }
+    });
+    if instances.is_empty() { return; }
+
+    let path = format!("{assets}/{map}");
+    let max_resolution = state.max_texture_resolution();
+    let texture = match state.load_texture_or_reuse(&path, Some("png".to_string()), max_resolution)
+    {
+        Ok(texture) => texture,
+        Err(error) => { console_warning!("cars: env map {}: {}", path, error); return; },
+    };
+    for (node, color) in &instances
+    {
+        let rgb = ((color >> 16) & 255) + ((color >> 8) & 255) + (color & 255);
+        // added in gamma space by the game, the shader adds linear
+        let strength = (rgb as f32 / (3.0 * 255.0)).powf(2.2);
+        for_each_node(&vec![node.clone()], &mut |part|
+        {
+            let part = part.read().unwrap();
+            let Some(material) = part.find_component::<Material>() else { return; };
+            component_downcast_mut!(material, Material);
+            material.set_texture(texture.clone(), TextureType::Environment);
+            material.get_data_mut().get_mut().reflectivity = strength;
+        });
+    }
+    console_log!("cars: {} level models with the env map {}", instances.len(), map);
 }
 
 // MODELRGBPER of the .inf: the game scales the corner colors of every car model by it at load (ship2: 50 %)

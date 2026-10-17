@@ -5,13 +5,13 @@
   },
   "project": {
     "name": "rustl-volt",
-    "version": "0.1.1",
+    "version": "0.2.0",
     "author": "",
     "description": "",
     "license": "",
     "url": "",
-    "build": 12,
-    "editing_time_secs": 4337,
+    "build": 13,
+    "editing_time_secs": 4887,
     "export_dirs": {
       "windows": "C:\\Users\\Bastl\\Desktop\\export\\rustl_volt"
     }
