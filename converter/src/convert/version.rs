@@ -21,7 +21,8 @@ use super::{Log, Settings};
 // 10: tumbleweeds are light sphere bodies (car textures without mipmaps - undone in 11)
 // 11: springs / axles stretched to the wheel center (revolt_length_m), pin offsets, car mipmaps on again
 // 12: car aerials in own `_solid` materials without alpha mask (the mite aerial was cut away by the color key)
-pub const ASSET_VERSION: u32 = 12;
+// 13: gfx/font.png is the font of the project (ui/font.png: RVGL's font.bmo, 512 x 512) - the font.bmp of the re-volt.io download had its glyphs a texel higher
+pub const ASSET_VERSION: u32 = 13;
 pub const FILE: &str = "convert.json";
 const FORMAT: u32 = 1;
 

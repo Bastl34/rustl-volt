@@ -1,6 +1,8 @@
 // converts the original Re-Volt files (Steam install) into engine formats (glb, png, ...) - used by the converter window and by the game
 
 pub mod convert;
+#[cfg(feature = "download")]
+pub mod download;
 pub mod glb;
 pub mod revolt;
 pub mod steam;

@@ -23,5 +23,5 @@ rustl_dylib = { path = "../../../../crates/rustl_dylib", optional = true }
 
 # the converter of the first start (setup.rs) and its folder picker - not on the web (no game files there)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-revolt_converter = { path = "../converter", default-features = false }
+revolt_converter = { path = "../converter", default-features = false, features = ["download"] }
 rfd = "0.17"

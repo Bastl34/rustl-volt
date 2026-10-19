@@ -1,4 +1,4 @@
-// the start of the game in the boot scene: find Re-Volt (Steam, the last folder or a chosen one), convert its files if they are missing or old, then the menu
+// the start of the game in the boot scene: the files of Re-Volt (the last folder, Steam or a chosen one, or the download of re-volt.io), convert them if they are missing or old, then the menu
 // the converter (../converter, library) writes into the project folder - or into the user data folder when that can not be written (exports in Program Files)
 
 use std::path::{Path, PathBuf};
@@ -25,6 +25,11 @@ const PICTURE_FILE: &str = "ui/loading.png";
 const ORIGINAL_PICTURE_FILE: &str = "loading_front.png";
 // everything the converter logged, next to convert.json
 const LOG_FILE: &str = "convert.log";
+const DOWNLOAD_LOG_FILE: &str = "download.log";
+// the key help below the text of the screens with buttons
+const KEYS_HINT: &str = "Arrows: select    Enter: OK    Backspace: quit";
+// a longer error line ends with ... on the screen
+const MESSAGE_CHARS: usize = 90;
 
 const FILL: usize = 0;
 const LOGO: usize = 1;
@@ -51,6 +56,12 @@ enum Phase
 {
     // the first update looks at the files and for the game
     Check,
+    // nothing converted yet and no folder of an earlier run: the Steam files or the download of re-volt.io
+    #[cfg(not(target_arch = "wasm32"))]
+    Choose(Choice),
+    // re-volt.io: the packs into the user data folder - the conversion follows
+    #[cfg(not(target_arch = "wasm32"))]
+    Downloading(Conversion),
     // Re-Volt not found: the folder picker opens by itself (cancel quits), a wrong folder is said here
     NotFound(String),
     #[cfg(not(target_arch = "wasm32"))]
@@ -64,9 +75,22 @@ enum Phase
 #[derive(Clone, Copy, PartialEq)]
 enum Action
 {
+    Steam,
+    Download,
     Pick,
     Retry,
+    // to the choice of the files
+    Back,
     Quit,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct Choice
+{
+    // the Re-Volt of Steam, if found
+    steam: Option<PathBuf>,
+    // what the download still needs, 0 = done already
+    megabytes: u64,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -104,6 +128,8 @@ pub struct Setup
     drawn: u32,
     // a button of the screen, used by the next update
     clicked: Option<Action>,
+    // the button Enter presses (arrows move it)
+    selected: usize,
     textures: Option<Textures>,
     // the frontend was a shell and the setup loaded it - Stop unloads it again
     pub loaded_frontend: Option<u32>,
@@ -120,7 +146,7 @@ impl Setup
         state.input.mouse_capture = MouseCapture::Never;
         console_log!("setup: project folder {}", project_dir.display());
 
-        Self { boot_scene, project, project_dir, target: None, reason: String::new(), phase: Phase::Check, drawn: 0, clicked: None, textures: None, loaded_frontend: None, mouse_capture }
+        Self { boot_scene, project, project_dir, target: None, reason: String::new(), phase: Phase::Check, drawn: 0, clicked: None, selected: 0, textures: None, loaded_frontend: None, mouse_capture }
     }
 
     // the menu runs - the mouse setting of the project again
@@ -132,21 +158,53 @@ impl Setup
     // Some(frontend): it was loaded already and is active now - the menu starts without a scene_loaded
     pub fn update(&mut self, state: &mut State, pad: &Buttons) -> Option<u32>
     {
-        let key = if pad.enter || pad.start { Some(Action::Pick) } else if pad.back || pad.pause { Some(Action::Quit) } else { None };
-        let action = self.clicked.take().or(key);
+        let buttons = self.buttons();
+        let mut action = self.clicked.take();
+        if action.is_none() && !buttons.is_empty()
+        {
+            if pad.left || pad.up { self.selected = self.selected.saturating_sub(1); }
+            if pad.right || pad.down { self.selected = (self.selected + 1).min(buttons.len() - 1); }
+            if pad.enter || pad.start { action = buttons.get(self.selected).map(|(_, action)| *action); }
+            else if pad.back || pad.pause { action = Some(Action::Quit); }
+        }
 
         match &mut self.phase
         {
             Phase::Check => return self.check(state),
+            #[cfg(not(target_arch = "wasm32"))]
+            Phase::Choose(choice) => match action
+            {
+                Some(Action::Steam) => match choice.steam.clone()
+                {
+                    Some(dir) => self.convert(dir),
+                    None =>
+                    {
+                        console_warning!("setup: Re-Volt not found in Steam - asking for the folder");
+                        self.go(Phase::NotFound(String::new()));
+                    },
+                },
+                Some(Action::Download) => self.download(),
+                Some(Action::Quit) => quit(state),
+                _ => {},
+            },
             Phase::NotFound(_) =>
             {
                 let first_pick = self.drawn >= PICK_AFTER_FRAMES && self.reason_is_first_search();
                 match action
                 {
                     Some(Action::Quit) => quit(state),
+                    Some(Action::Back) => self.choose(),
                     Some(_) => return self.pick(state),
                     None if first_pick => return self.pick(state),
                     None => {},
+                }
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            Phase::Downloading(download) =>
+            {
+                if download.poll()
+                {
+                    self.downloaded();
                 }
             },
             #[cfg(not(target_arch = "wasm32"))]
@@ -162,7 +220,8 @@ impl Setup
                 Some(Action::Quit) => quit(state),
                 Some(Action::Retry) => self.go(Phase::Check),
                 Some(Action::Pick) => return self.pick(state),
-                None => {},
+                Some(Action::Back) => self.choose(),
+                _ => {},
             },
             Phase::Loading => {},
         }
@@ -173,6 +232,72 @@ impl Setup
     {
         self.phase = phase;
         self.drawn = 0;
+        self.selected = 0;
+    }
+
+    // the choice of the files: Steam or re-volt.io
+    fn choose(&mut self)
+    {
+        #[cfg(target_arch = "wasm32")]
+        self.go(Phase::Check);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let steam = revolt_converter::steam::find_revolt().filter(|dir| revolt_converter::is_game_dir(dir));
+            let megabytes = self.download_dir().map_or(0, |dir| revolt_converter::download::missing_megabytes(&dir, true));
+            self.go(Phase::Choose(Choice { steam, megabytes }));
+        }
+    }
+
+    // <user data>/rustl-volt/revolt_io, else next to the converted files
+    #[cfg(not(target_arch = "wasm32"))]
+    fn download_dir(&self) -> Option<PathBuf>
+    {
+        revolt_converter::download::default_dir().or_else(|| self.target.as_ref().map(|target| target.join("revolt_io")))
+    }
+
+    // the packs on a worker thread - the conversion of the folder follows (downloaded)
+    #[cfg(not(target_arch = "wasm32"))]
+    fn download(&mut self)
+    {
+        let Some(dir) = self.download_dir() else
+        {
+            self.go(Phase::Failed("No folder for the download.".to_string()));
+            return;
+        };
+        console_log!("setup: downloading the files of re-volt.io into {}", dir.display());
+        let (sender, receiver) = channel();
+        let log = revolt_converter::convert::Log::new(sender);
+        let target = dir.clone();
+        std::thread::spawn(move || revolt_converter::download::run(target, true, log));
+
+        self.go(Phase::Downloading(Conversion::new(receiver, dir)));
+    }
+
+    // its log next to convert.json, then the conversion - or why not
+    #[cfg(not(target_arch = "wasm32"))]
+    fn downloaded(&mut self)
+    {
+        let Phase::Downloading(download) = std::mem::replace(&mut self.phase, Phase::Check) else { return; };
+
+        if let Some(target) = &self.target
+        {
+            let path = target.join("assets").join(DOWNLOAD_LOG_FILE);
+            match std::fs::write(&path, download.lines.join("\n"))
+            {
+                Ok(()) => { console_log!("setup: download log {}", path.display()); },
+                Err(error) => { console_warning!("setup: {}: {}", path.display(), error); },
+            }
+        }
+        let error = download.lines.iter().rev().find_map(|line| line.strip_prefix("E ")).map(|line| line.trim().to_string());
+        if error.is_some() || !revolt_converter::is_game_dir(&download.game_dir)
+        {
+            let reason = error.unwrap_or_else(|| format!("{} has no Re-Volt files", download.game_dir.display()));
+            console_error!("setup: download failed - {}", reason);
+            self.go(Phase::Failed(format!("Download failed: {reason}")));
+            return;
+        }
+        self.convert(download.game_dir);
     }
 
     // the picker opens by itself only when nothing was picked yet (no message on the screen)
@@ -210,16 +335,12 @@ impl Setup
             console_log!("setup: convert - {}", reason);
             self.reason = reason;
 
-            // the folder of the last run, else Steam
+            // the folder of the last run, else the choice of the files
             let last = info.map(|info| PathBuf::from(info.game_dir)).filter(|dir| !dir.as_os_str().is_empty() && revolt_converter::is_game_dir(dir));
-            match last.or_else(|| revolt_converter::steam::find_revolt().filter(|dir| revolt_converter::is_game_dir(dir)))
+            match last
             {
                 Some(game_dir) => self.convert(game_dir),
-                None =>
-                {
-                    console_warning!("setup: Re-Volt not found in Steam - asking for the folder");
-                    self.go(Phase::NotFound(String::new()));
-                },
+                None => self.choose(),
             }
             None
         }
@@ -262,7 +383,8 @@ impl Setup
         }
     }
 
-    // the folder picker - cancel quits the game, a folder without Re-Volt is said on the screen
+    // the folder picker - cancel goes back to the choice of the files, a folder without Re-Volt is said on the screen
+    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))]
     fn pick(&mut self, state: &mut State) -> Option<u32>
     {
         #[cfg(target_arch = "wasm32")]
@@ -276,8 +398,8 @@ impl Setup
             let picked = rfd::FileDialog::new().set_title("Choose the Re-Volt folder").pick_folder();
             let Some(dir) = picked else
             {
-                console_log!("setup: no folder chosen - quit");
-                quit(state);
+                console_log!("setup: no folder chosen");
+                self.choose();
                 return None;
             };
             if !revolt_converter::is_game_dir(&dir)
@@ -313,7 +435,7 @@ impl Setup
         let log = Log::new(sender);
         std::thread::spawn(move || convert::run(settings, levels, cars, log));
 
-        self.go(Phase::Converting(Conversion { receiver, game_dir, progress: 0.0, heading: String::new(), step: "Starting".to_string(), lines: vec![], warnings: 0, errors: 0 }));
+        self.go(Phase::Converting(Conversion::new(receiver, game_dir)));
     }
 
     // the run is done: its log next to convert.json, then the menu - or why not
@@ -388,7 +510,8 @@ impl Setup
             let height = LOADING_LOGO_WIDTH / LOGO_ASPECT;
             painter.image(LOGO, Anchor::Center, [(WIDTH - LOADING_LOGO_WIDTH) * 0.5, LOADING_LOGO_Y, LOADING_LOGO_WIDTH, height], Color32::WHITE);
         }
-        let (title, lines, note, bar, buttons) = self.content(state);
+        let (title, lines, note, bar) = self.content(state);
+        let buttons = self.buttons();
         // paths always with forward slashes on the screen
         let slashes = |text: String| text.replace('\\', "/");
         let (lines, note, bar): (Vec<String>, _, _) = (lines.into_iter().map(slashes).collect(), note.map(slashes), bar.map(|(progress, text)| (progress, slashes(text))));
@@ -440,10 +563,12 @@ impl Setup
             {
                 ui.horizontal(|ui|
                 {
-                    for (label, action) in buttons
+                    for (index, (label, action)) in buttons.into_iter().enumerate()
                     {
-                        if ui.button(RichText::new(label).size(BUTTON_SIZE * scale)).clicked()
+                        let button = egui::Button::new(RichText::new(label).size(BUTTON_SIZE * scale)).selected(index == self.selected);
+                        if ui.add(button).clicked()
                         {
+                            self.selected = index;
                             self.clicked = Some(action);
                         }
                     }
@@ -452,22 +577,61 @@ impl Setup
         }
     }
 
-    // title, lines, a note (warning color), the bar (progress, text), the buttons of the phase
-    fn content(&self, state: &State) -> (String, Vec<String>, Option<String>, Option<(f32, String)>, Vec<(&'static str, Action)>)
+    // the buttons of the phase - Enter presses the selected one
+    fn buttons(&self) -> Vec<(&'static str, Action)>
+    {
+        match &self.phase
+        {
+            #[cfg(not(target_arch = "wasm32"))]
+            Phase::Choose(_) => vec![("Download from re-volt.io", Action::Download), ("Steam files", Action::Steam), ("Quit", Action::Quit)],
+            Phase::NotFound(_) => vec![("Choose folder...", Action::Pick), ("Back", Action::Back), ("Quit", Action::Quit)],
+            Phase::Failed(_) => vec![("Try again", Action::Retry), ("Choose folder...", Action::Pick), ("Back", Action::Back), ("Quit", Action::Quit)],
+            _ => vec![],
+        }
+    }
+
+    // title, lines, a note (warning color), the bar (progress, text) of the phase
+    fn content(&self, state: &State) -> (String, Vec<String>, Option<String>, Option<(f32, String)>)
     {
         let target = self.target.as_ref().map(|target| target.display().to_string()).unwrap_or_default();
         match &self.phase
         {
-            Phase::Check => (String::new(), vec![], None, None, vec![]),
+            Phase::Check => (String::new(), vec![], None, None),
+            #[cfg(not(target_arch = "wasm32"))]
+            Phase::Choose(choice) =>
+            {
+                let steam = match &choice.steam
+                {
+                    Some(dir) => format!("Steam files: found in {}", dir.display()),
+                    None => "Steam files: not found - you choose the Re-Volt folder.".to_string(),
+                };
+                let download = match choice.megabytes
+                {
+                    0 => "re-volt.io: downloaded already.".to_string(),
+                    megabytes => format!("re-volt.io: downloads the files of the Re-Volt community ({megabytes} MB)."),
+                };
+                let lines = vec!["Rustl-Volt plays with the files of the original Re-Volt.".to_string(), download, steam, KEYS_HINT.to_string()];
+                ("Re-Volt files".to_string(), lines, None, None)
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            Phase::Downloading(download) =>
+            {
+                let lines = vec![
+                    "from re-volt.io: game files, car boxes of RVGL, Dreamcast soundtrack".to_string(),
+                    format!("into {}", download.game_dir.display()),
+                ];
+                let note = (download.warnings + download.errors > 0).then(|| format!("{} warnings, {} errors", download.warnings, download.errors));
+                ("Downloading Re-Volt".to_string(), lines, note, Some((download.progress, download.step.clone())))
+            },
             Phase::NotFound(message) =>
             {
                 let lines = vec![
-                    "Rustl-Volt plays with the files of the original Re-Volt (Steam).".to_string(),
-                    "Re-Volt was not found - choose its folder (the one with levels and cars).".to_string(),
-                    "Enter: choose the folder    Backspace: quit".to_string(),
+                    "Re-Volt was not found in Steam.".to_string(),
+                    "Choose its folder (the one with levels and cars).".to_string(),
+                    KEYS_HINT.to_string(),
                 ];
                 let note = (!message.is_empty()).then(|| message.clone());
-                ("Re-Volt not found".to_string(), lines, note, None, vec![("Choose folder...", Action::Pick), ("Quit", Action::Quit)])
+                ("Re-Volt not found".to_string(), lines, note, None)
             },
             #[cfg(not(target_arch = "wasm32"))]
             Phase::Converting(conversion) =>
@@ -478,17 +642,21 @@ impl Setup
                     format!("into {}", target),
                 ];
                 let note = (conversion.warnings + conversion.errors > 0).then(|| format!("{} warnings, {} errors", conversion.warnings, conversion.errors));
-                ("Converting Re-Volt".to_string(), lines, note, Some((conversion.progress, conversion.step.clone())), vec![])
+                ("Converting Re-Volt".to_string(), lines, note, Some((conversion.progress, conversion.step.clone())))
             },
             Phase::Failed(message) =>
             {
-                let lines = vec![message.clone(), "Enter: choose another folder    Backspace: quit".to_string()];
-                ("Can not start".to_string(), lines, None, None, vec![("Choose folder...", Action::Pick), ("Try again", Action::Retry), ("Quit", Action::Quit)])
+                let message = match message.chars().count() > MESSAGE_CHARS
+                {
+                    true => format!("{}...", message.chars().take(MESSAGE_CHARS).collect::<String>()),
+                    false => message.clone(),
+                };
+                ("Can not start".to_string(), vec![message, KEYS_HINT.to_string()], None, None)
             },
             Phase::Loading =>
             {
                 let (progress, file) = { let status = state.scene_loading.read().unwrap(); (status.progress(), status.current.clone()) };
-                (String::new(), vec![], None, Some((progress, file)), vec![])
+                (String::new(), vec![], None, Some((progress, file)))
             },
         }
     }
@@ -517,6 +685,11 @@ impl Setup
 #[cfg(not(target_arch = "wasm32"))]
 impl Conversion
 {
+    fn new(receiver: Receiver<revolt_converter::convert::Message>, game_dir: PathBuf) -> Self
+    {
+        Self { receiver, game_dir, progress: 0.0, heading: String::new(), step: "Starting".to_string(), lines: vec![], warnings: 0, errors: 0 }
+    }
+
     // the messages of the converter thread - true when it is done
     fn poll(&mut self) -> bool
     {

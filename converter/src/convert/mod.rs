@@ -121,6 +121,7 @@ impl Log
     pub fn warn(&self, text: impl Into<String>) { self.warnings.fetch_add(1, Ordering::Relaxed); self.send(Message::Log(LogLevel::Warning, text.into())); }
     pub fn error(&self, text: impl Into<String>) { self.errors.fetch_add(1, Ordering::Relaxed); self.send(Message::Log(LogLevel::Error, text.into())); }
     pub fn progress(&self, value: f32) { self.send(Message::Progress(value)); }
+    pub fn done(&self) { self.send(Message::Done); }
     pub fn errors(&self) -> usize { self.errors.load(Ordering::Relaxed) }
     pub fn warnings(&self) -> usize { self.warnings.load(Ordering::Relaxed) }
 
@@ -150,7 +151,7 @@ pub fn run(settings: Settings, levels: Vec<String>, cars: Vec<String>, log: Log)
     {
         log.error(format!("env maps: {err:#}"));
     }
-    log.step("HUD pages (gfx/font, fxpage2, spru --> png, black transparent)");
+    log.step("HUD pages (ui/font.png of the project, gfx/fxpage2, spru --> png, black transparent)");
     if let Err(err) = texture::convert_hud_pages(&settings, &log)
     {
         log.error(format!("hud pages: {err:#}"));
@@ -175,7 +176,7 @@ pub fn run(settings: Settings, levels: Vec<String>, cars: Vec<String>, log: Log)
     {
         log.error(format!("sounds: {err:#}"));
     }
-    log.step("Music (music/TrackNN.ogg --> assets/music/trackNN.ogg)");
+    log.step("Music (music/TrackNN.ogg or redbook/trackNN.ogg --> assets/music/trackNN.ogg)");
     if let Err(err) = music::copy_all(&settings, &log)
     {
         log.error(format!("music: {err:#}"));

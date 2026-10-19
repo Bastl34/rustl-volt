@@ -6,6 +6,7 @@ use std::sync::mpsc::{channel, Receiver};
 use eframe::egui::{self, RichText};
 
 use revolt_converter::convert::{self, cars, Log, LogLevel, Message, Settings};
+use revolt_converter::download;
 use revolt_converter::revolt::{find_file, has_reversed, inf::Inf, list_levels, MIRRORED, REVERSED};
 use crate::log_view::LogView;
 use revolt_converter::steam;
@@ -36,8 +37,12 @@ pub struct ConverterApp
     // the last heading and step of the log - text on the progress bar
     progress_text: String,
     current_heading: String,
-    // Some while a conversion runs
+    // Some while a conversion or a download runs
     receiver: Option<Receiver<Message>>,
+    // the soundtrack too when downloading from re-volt.io
+    download_music: bool,
+    // the folder of the running download - the game folder once it is done
+    downloading: Option<PathBuf>,
 }
 
 impl ConverterApp
@@ -65,6 +70,8 @@ impl ConverterApp
             progress_text: String::new(),
             current_heading: String::new(),
             receiver: None,
+            download_music: true,
+            downloading: None,
         };
 
         app.find_game();
@@ -144,6 +151,39 @@ impl ConverterApp
         self.receiver = Some(receiver);
     }
 
+    // re-volt.io into the user data folder of the game (the game finds it there too)
+    fn start_download(&mut self)
+    {
+        let Some(dir) = download::default_dir() else
+        {
+            self.log.push(LogLevel::Error, "no user data folder for the download".to_string());
+            return;
+        };
+        let (sender, receiver) = channel();
+        let log = Log::new(sender);
+        let (target, music) = (dir.clone(), self.download_music);
+        std::thread::spawn(move || download::run(target, music, log));
+
+        self.log.clear();
+        self.progress = 0.0;
+        self.progress_text.clear();
+        self.current_heading.clear();
+        self.receiver = Some(receiver);
+        self.downloading = Some(dir);
+    }
+
+    fn downloaded(&mut self, dir: PathBuf)
+    {
+        if !revolt_converter::is_game_dir(&dir)
+        {
+            self.log.push(LogLevel::Error, format!("{} has no Re-Volt files after the download", dir.display()));
+            return;
+        }
+        self.game_dir = dir.display().to_string();
+        self.log.push(LogLevel::Info, format!("Game folder: {}", self.game_dir));
+        self.scan();
+    }
+
     fn poll(&mut self)
     {
         let Some(receiver) = &self.receiver else { return; };
@@ -168,7 +208,11 @@ impl ConverterApp
             }
         }
 
-        if done { self.receiver = None; }
+        if done
+        {
+            self.receiver = None;
+            if let Some(dir) = self.downloading.take() { self.downloaded(dir); }
+        }
     }
 
     fn settings_ui(&mut self, ui: &mut egui::Ui)
@@ -185,6 +229,10 @@ impl ConverterApp
                     self.scan();
                 }
                 if ui.button("Find in Steam").clicked() { self.find_game(); }
+                let megabytes = download::default_dir().map_or(0, |dir| download::missing_megabytes(&dir, self.download_music));
+                let label = if megabytes > 0 { format!("Download from re-volt.io ({megabytes} MB)") } else { "Use re-volt.io download".to_string() };
+                if ui.add_enabled(!running, egui::Button::new(label)).on_hover_text(download::SITE).clicked() { self.start_download(); }
+                ui.checkbox(&mut self.download_music, "with soundtrack");
             });
             ui.end_row();
 

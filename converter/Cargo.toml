@@ -17,9 +17,11 @@ path = "src/main.rs"
 required-features = ["ui"]
 
 [features]
-default = ["ui"]
+default = ["ui", "download"]
 # preserve_order only here: the game must not change the serde_json features of the engine (another engine build)
 ui = ["dep:eframe", "serde_json/preserve_order"]
+# the files of re-volt.io for players without the Steam version: https + zip
+download = ["dep:ureq", "dep:zip"]
 
 [dependencies]
 # git main like the engine - its .cargo/config.toml patches egui to git for everything below rustl/
@@ -28,3 +30,6 @@ image = { version = "0.25", default-features = false, features = ["bmp", "png"] 
 # ui: .project and .scene keep their key order when written back
 serde_json = "1"
 anyhow = "1"
+ureq = { version = "3.4.2", optional = true }
+# the same features as the engine (editor exports)
+zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"], optional = true }

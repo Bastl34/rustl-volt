@@ -21,7 +21,7 @@ const AMMO: Color32 = Color32::from_rgb(255, 170, 34);
 const SPRITE_ALPHA: u8 = 0xC0;
 const FRAME_ALPHA: u8 = 0xE0;
 
-// font.bmp: 32 glyphs of 8 x 16 texels per row from '!', the glyph is 7 wide - the exe reads v 1..17, half a texel higher the filter does not catch the next row (a line under the digits)
+// font.bmp: 32 glyphs of 8 x 16 texels per row from '!', the glyph is 7 wide - in units of the 256 page, the font of the project (ui/font.png) is 512 (the exe reads v 1..17)
 const GLYPH_FIRST: u32 = 0x21;
 const GLYPHS_PER_ROW: u32 = 32;
 
@@ -544,7 +544,7 @@ impl Painter
             if code < GLYPH_FIRST || code > 0x7e { continue; }
             let index = code - GLYPH_FIRST;
             let (column, row) = ((index % GLYPHS_PER_ROW) as f32, (index / GLYPHS_PER_ROW) as f32);
-            self.sprite(0, anchor, [x + i as f32 * w, y, w, h], [column * 8.0 + 0.5, row * 16.0 + 0.5, 7.0, 16.0], color);
+            self.sprite(0, anchor, [x + i as f32 * w, y, w, h], [column * 8.0 + 0.5, row * 16.0, 7.0, 16.0], color);
         }
     }
 

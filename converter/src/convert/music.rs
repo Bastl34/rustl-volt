@@ -1,5 +1,6 @@
 // music/TrackNN.ogg -> assets/music/trackNN.ogg and the tracks of a level in its scene sound list
 // the game plays cd audio: REDBOOK of the .inf is a range of audio tracks, 0 = cd track 2 (track 1 is data) - the steam version maps them to music/TrackNN
+// RVGL installs and the re-volt.io soundtrack have redbook/trackNN.ogg (Dreamcast versions, the same songs and numbers)
 
 use std::path::PathBuf;
 
@@ -27,12 +28,12 @@ fn out_path(settings: &Settings, index: i64) -> PathBuf
 // already ogg in the steam version - copied, a copy newer than the original is kept
 pub fn copy_all(settings: &Settings, log: &Log) -> Result<()>
 {
-    let dir = settings.game_dir.join("music");
+    let dirs = [settings.game_dir.join("music"), settings.game_dir.join("redbook")];
     let (mut copied, mut kept, mut missing) = (0, 0, vec![]);
     for index in 0..TRACK_COUNT
     {
         let file = format!("Track{:02}.ogg", index + FIRST_CD_TRACK);
-        let Some(source) = find_file(&dir, &file) else { missing.push(file); continue; };
+        let Some(source) = dirs.iter().find_map(|dir| find_file(dir, &file)) else { missing.push(file); continue; };
         let out = out_path(settings, index);
         let modified = |path: &std::path::Path| std::fs::metadata(path).and_then(|m| m.modified()).ok();
         if modified(&out).is_some_and(|copy| modified(&source).is_some_and(|original| copy >= original))

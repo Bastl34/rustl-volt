@@ -180,7 +180,8 @@ pub fn load_extra_pages(game_dir: &Path, dir: &Path, level: &str, used: &[usize]
                 continue;
             },
         };
-        let Some(path) = find_file(folder, file).or_else(|| find_file(&market1, file)) else
+        // cars/misc: the car boxes of RVGL installs and re-volt.io downloads
+        let Some(path) = find_file(folder, file).or_else(|| find_file(&market1, file)).or_else(|| find_file(&game_dir.join("cars").join("misc"), file)) else
         {
             log.warn(format!("  page {page}: {file} missing - untextured"));
             continue;
@@ -247,15 +248,28 @@ pub fn convert_loading_screens(settings: &Settings, log: &Log) -> Result<()>
 
 const LOADING_TILE: u32 = 256;
 
+
+// the font of the game in the project folder (RVGL's font.bmo, ui/make_font.py) - the font.bmp of the game only without it
+const PROJECT_FONT: &str = "ui/font.png";
+
 // the pages of the HUD (revolt.exe draws it from them): font, fxpage2 (arrows, speed dots, weapon frame), spru (frames) - black and its dark gray rims are transparent
-// the font is white on black: its brightness becomes the alpha, so tinted text has no dark fringe
+// the font: the one of the project, else font.bmp white on black - its brightness becomes the alpha, so tinted text has no dark fringe
 pub fn convert_hud_pages(settings: &Settings, log: &Log) -> Result<()>
 {
     let gfx = settings.game_dir.join("gfx");
     let out = settings.out_dir.join("gfx");
     std::fs::create_dir_all(&out)?;
 
-    for name in ["font", "fxpage2", "spru"]
+    let project_font = settings.files_dir.join(PROJECT_FONT);
+    let names: &[&str] = if project_font.is_file() { &["fxpage2", "spru"] } else { &["font", "fxpage2", "spru"] };
+    if project_font.is_file()
+    {
+        let target = out.join("font.png");
+        log.read(&project_font);
+        std::fs::copy(&project_font, &target)?;
+        log.write(&target);
+    }
+    for &name in names
     {
         let source = find_file(&gfx, &format!("{name}.bmp")).with_context(|| format!("gfx/{name}.bmp missing"))?;
         let target = out.join(format!("{name}.png"));
