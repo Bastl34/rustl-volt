@@ -19,9 +19,14 @@ No files of the original game are in this repository. Rustl-Volt converts them f
 - **The files of Re-Volt**, from one of two sources - the game asks at the first start:
   - **re-volt.io**: the game downloads the packs of [re-volt.io](https://re-volt.io/downloads/misc) - the game files, the car box pictures of RVGL and the Dreamcast soundtrack (about 170 MB, into the user data folder).
   - **Steam**: your installed Re-Volt ([store page](https://store.steampowered.com/app/287310/ReVolt/)). The game finds it on its own. If it does not, it asks you for the folder.
-- **[rustl](https://github.com/Bastl34/rustl)** checked out, plus its toolchain (Rust and Node.js, see its README).
 
-## Setup
+## Play
+
+Download the latest build from [Releases](https://github.com/Bastl34/rustl-volt/releases), unpack it and start it. At the first start the game converts Re-Volt, then it opens the menu.
+
+## Run from source
+
+Needs **[rustl](https://github.com/Bastl34/rustl)** checked out, plus its toolchain (Rust and Node.js, see its README).
 
 1. Clone this repository into the rustl folder, as `data/projects/rustl-volt`. `code/Cargo.toml` and `converter/` find the engine at `../../../..`.
 2. Start the rustl editor (`cargo dev`) and open `rustl-volt.project`.
