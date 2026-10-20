@@ -35,7 +35,7 @@
       "frustum_culling": true,
       "max_texture_resolution": null,
       "msaa": 8,
-      "occlusion_culling": true,
+      "occlusion_culling": false,
       "present_mode": "VSync",
       "reverse_z": true,
       "shadow": true,
