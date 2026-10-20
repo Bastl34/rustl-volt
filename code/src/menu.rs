@@ -388,17 +388,53 @@ pub struct AudioSettings
 
 pub const AUDIO_STEPS: u32 = 10;
 
-// the video options - fullscreen only in exports (the editor has its own, F)
+// the video options - fullscreen only in exports (the editor has its own, F), the graphics default to the values of the project
 #[derive(Clone, Copy, PartialEq)]
 pub struct VideoSettings
 {
     pub fullscreen: bool,
     pub show_fps: bool,
+    pub msaa: u32,
+    pub ssao: Ssao,
+    pub shadows: Shadows,
 }
 
 impl Default for VideoSettings
 {
-    fn default() -> Self { Self { fullscreen: false, show_fps: true } }
+    fn default() -> Self { Self { fullscreen: false, show_fps: true, msaa: 8, ssao: Ssao::Full, shadows: Shadows::Medium } }
+}
+
+// antialiasing samples of the Video Settings (1 = off) - the engine clamps to what the gpu has
+pub const MSAA_STEPS: [u32; 4] = [1, 2, 4, 8];
+
+#[derive(Clone, Copy, PartialEq, rustl::serde::Serialize, rustl::serde::Deserialize)]
+#[serde(crate = "rustl::serde")]
+pub enum Ssao { Off, Half, Full }
+
+impl Ssao
+{
+    pub const ALL: [Ssao; 3] = [Ssao::Off, Ssao::Half, Ssao::Full];
+    pub fn label(self) -> &'static str { match self { Ssao::Off => "Off", Ssao::Half => "Low", Ssao::Full => "High" } }
+}
+
+#[derive(Clone, Copy, PartialEq, rustl::serde::Serialize, rustl::serde::Deserialize)]
+#[serde(crate = "rustl::serde")]
+pub enum Shadows { Off, Low, Medium, High }
+
+impl Shadows
+{
+    pub const ALL: [Shadows; 4] = [Shadows::Off, Shadows::Low, Shadows::Medium, Shadows::High];
+    pub fn label(self) -> &'static str { match self { Shadows::Off => "Off", Shadows::Low => "Low", Shadows::Medium => "Medium", Shadows::High => "High" } }
+    // shadow map size, None = no shadows
+    pub fn resolution(self) -> Option<u32> { match self { Shadows::Off => None, Shadows::Low => Some(1024), Shadows::Medium => Some(2048), Shadows::High => Some(4096) } }
+}
+
+// one step left / right in a list of options, clamped at the ends - enter (wrap) starts again at the first
+fn step_option<T: Copy + PartialEq>(all: &[T], current: T, up: bool, wrap: bool) -> T
+{
+    let i = all.iter().position(|v| *v == current).unwrap_or(0);
+    let next = match (up, wrap) { (true, true) => (i + 1) % all.len(), (true, false) => (i + 1).min(all.len() - 1), (false, _) => i.saturating_sub(1) };
+    all[next]
 }
 
 // the keys of the Controller Settings screen: action, keyboard, gamepad
@@ -463,6 +499,8 @@ pub struct Menu
     solo: Option<(String, usize)>,
     // the connected gamepads (player ids) - the app sets them every frame
     pub gamepads: Vec<usize>,
+    // antialiasing samples the gpu has - the app sets it every frame
+    pub max_msaa: u32,
 }
 
 impl Menu
@@ -475,7 +513,7 @@ impl Menu
             name: String::new(), letter: 0, car: 0, track: 0, reversed: false, mirrored: false, trial_track: 0, trial_reversed: false, trial_mirrored: false,
             message: vec![], screen_time: 0.0, clock: 0.0, events: vec![],
             folder: folder.to_string(), version: String::new(), saved: SaveData::default(), textures: None, failed: false,
-            multi: MultiSetup::default(), multi_on: false, solo: None, gamepads: vec![],
+            multi: MultiSetup::default(), multi_on: false, solo: None, gamepads: vec![], max_msaa: 8,
         }
     }
 
@@ -1007,7 +1045,7 @@ impl Menu
                 }
                 if (input.left || input.right) && self.screen == Screen::VideoSettings
                 {
-                    self.toggle_video(cursor);
+                    self.change_video(cursor, input.right, false);
                     self.sound("menuleftright");
                 }
                 if input.enter && items[cursor].1
@@ -1130,7 +1168,7 @@ impl Menu
                 items
             },
             Screen::Options => vec![item("Game Settings", true), item("Video Settings", true), item("Audio Settings", true), item("Controller Settings", true), item("View Credits", false)],
-            Screen::VideoSettings => vec![item("Fullscreen", true), item("Show FPS", true)],
+            Screen::VideoSettings => vec![item("Fullscreen", true), item("Show FPS", true), item("Antialiasing", true), item("Ambient Occlusion", true), item("Shadows", true), item("Reset to Defaults", true)],
             Screen::GameSettings => vec![item("Number of Cars", true), item("Number of Laps", true), item("Difficulty", true), item("Pick ups", true), item("Speed Units", true)],
             Screen::AudioSettings => vec![item("Master Volume", true), item("Music Volume", true), item("Effects Volume", true)],
             Screen::Quit => vec![item("Yes", true), item("No", true)],
@@ -1185,16 +1223,36 @@ impl Menu
 
     fn video_value(&self, index: usize) -> String
     {
-        let on = if index == 0 { self.video.fullscreen } else { self.video.show_fps };
-        if on { "On" } else { "Off" }.to_string()
-    }
-
-    fn toggle_video(&mut self, index: usize)
-    {
+        let on_off = |on: bool| if on { "On" } else { "Off" }.to_string();
         match index
         {
-            0 => self.video.fullscreen = !self.video.fullscreen,
-            _ => self.video.show_fps = !self.video.show_fps,
+            0 => on_off(self.video.fullscreen),
+            1 => on_off(self.video.show_fps),
+            2 => match self.video.msaa.min(self.max_msaa.max(1)) { 1 => "Off".to_string(), samples => format!("{samples}x") },
+            3 => self.video.ssao.label().to_string(),
+            4 => self.video.shadows.label().to_string(),
+            _ => String::new(),
+        }
+    }
+
+    // left / right (clamped) or enter (wraps around)
+    fn change_video(&mut self, index: usize, up: bool, wrap: bool)
+    {
+        let video = &mut self.video;
+        match index
+        {
+            0 => video.fullscreen = !video.fullscreen,
+            1 => video.show_fps = !video.show_fps,
+            2 =>
+            {
+                let steps: Vec<u32> = MSAA_STEPS.iter().copied().filter(|&samples| samples <= self.max_msaa.max(1)).collect();
+                video.msaa = step_option(&steps, video.msaa.min(self.max_msaa.max(1)), up, wrap);
+            },
+            3 => video.ssao = step_option(&Ssao::ALL, video.ssao, up, wrap),
+            4 => video.shadows = step_option(&Shadows::ALL, video.shadows, up, wrap),
+            // the window stays as it is
+            _ if wrap => *video = VideoSettings { fullscreen: video.fullscreen, ..VideoSettings::default() },
+            _ => {},
         }
     }
 
@@ -1232,7 +1290,7 @@ impl Menu
             (Screen::Options, 1) => self.go(Screen::VideoSettings),
             (Screen::Options, 2) => self.go(Screen::AudioSettings),
             (Screen::Options, 3) => self.go(Screen::Controls),
-            (Screen::VideoSettings, index) => self.toggle_video(index),
+            (Screen::VideoSettings, index) => self.change_video(index, true, true),
             (Screen::SelectCup, _) => self.go(Screen::CupSummary),
             (Screen::Quit, 0) => self.events.push(MenuEvent::Quit),
             (Screen::Quit, _) => self.go(Screen::Main),

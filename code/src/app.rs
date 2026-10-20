@@ -43,7 +43,7 @@ use field::{Opponent, Slot};
 use frontend::Frontend;
 use hud::Hud;
 use laser::Lasers;
-use menu::{CarInfo, ChampionshipChoice, Menu, MenuEvent, RaceAction, RaceChoice, RaceMenu, RaceMenuKind, TrackInfo, VideoSettings, MENU_SOUND_SPEED};
+use menu::{CarInfo, ChampionshipChoice, Menu, MenuEvent, RaceAction, RaceChoice, RaceMenu, RaceMenuKind, Shadows, Ssao, TrackInfo, VideoSettings, MENU_SOUND_SPEED};
 use rustl::input::keyboard::Key;
 use rustl::state::scene::components::component::ComponentItem;
 use music::Music;
@@ -139,6 +139,9 @@ pub struct Game
     paused_sounds: Option<Vec<ComponentItem>>,
     // the fullscreen of the Video Settings last given to the window (exports only)
     fullscreen_applied: Option<bool>,
+    // the graphics of the Video Settings last given to the engine, the project values before (back at Stop - the editor saves them)
+    graphics_applied: Option<(u32, Ssao, Shadows)>,
+    graphics_before: Option<(u32, bool, bool, bool, u32)>,
     // the car of the player whose sounds are stereo (cars::set_own_car_sounds)
     own_car: Option<NodeItem>,
     // split screen: the input device of each local player - empty for one player (all devices)
@@ -541,6 +544,14 @@ impl App for Game
             // the editor gets its scenes back as they were loaded before Play
             self.unload_game_scenes(&mut state, None);
             state.hide_cursor = false;
+            if let Some((msaa, ssao, ssao_half_res, shadow, shadow_resolution)) = self.graphics_before.take()
+            {
+                state.rendering.msaa.set(msaa);
+                state.rendering.ssao = ssao;
+                state.rendering.ssao_half_res = ssao_half_res;
+                state.rendering.shadow.set(shadow);
+                state.rendering.shadow_map_resolution.set(shadow_resolution);
+            }
             if let Some(car) = self.own_car.take() { cars::set_own_car_sounds(&car, false); }
             // Stop while the setup runs: back to the boot scene
             if let Some(setup) = self.setup.take()
@@ -635,6 +646,7 @@ impl Game
     // F toggles fullscreen (not on the name screen) and the window follows the setting - exports only, the editor has its own F
     fn update_video(&mut self, state: &mut State)
     {
+        self.update_graphics(state);
         if cfg!(feature = "dynamic") { return; }
         let typing = self.menu.as_ref().is_some_and(|run| run.racing.is_none() && run.menu.typing());
         if !typing && state.io.input_manager.keyboard.is_pressed(Key::F)
@@ -651,6 +663,25 @@ impl Game
             state.rendering.fullscreen.set(fullscreen);
             self.fullscreen_applied = Some(fullscreen);
         }
+    }
+
+    // antialiasing, ambient occlusion and shadows of the Video Settings - also in the editor, Stop gives the project values back
+    fn update_graphics(&mut self, state: &mut State)
+    {
+        let video = self.video();
+        let graphics = (video.msaa, video.ssao, video.shadows);
+        if self.graphics_applied == Some(graphics) { return; }
+        let rendering = &mut state.rendering;
+        if self.graphics_before.is_none()
+        {
+            self.graphics_before = Some((*rendering.msaa.get_ref(), rendering.ssao, rendering.ssao_half_res, *rendering.shadow.get_ref(), *rendering.shadow_map_resolution.get_ref()));
+        }
+        rendering.msaa.set(video.msaa);
+        rendering.ssao = video.ssao != Ssao::Off;
+        rendering.ssao_half_res = video.ssao == Ssao::Half;
+        rendering.shadow.set(video.shadows != Shadows::Off);
+        if let Some(resolution) = video.shadows.resolution() { rendering.shadow_map_resolution.set(resolution); }
+        self.graphics_applied = Some(graphics);
     }
 
     // the sounds of the driven car are stereo (race, stunt arena) - the car before gets its spatial ones back; split screen: all spatial, every camera hears its cars
@@ -832,6 +863,7 @@ impl Game
         }
         // split screen: the player choosing name and car steers the menu with the own device
         run.menu.gamepads = state.io.input_manager.gamepads.values().filter(|gamepad| gamepad.connected).map(|gamepad| gamepad.id).collect();
+        run.menu.max_msaa = state.rendering_adapter.max_msaa_samples;
         let buttons = run.menu.input_device().map_or(self.pad.now, |device| self.pad.device(device));
         run.menu.update(&mut state.io.input_manager.keyboard, &buttons, &run.cars, &run.tracks, dt);
         // name, settings and audio options are kept as soon as they change

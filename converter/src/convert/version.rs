@@ -22,7 +22,8 @@ use super::{Log, Settings};
 // 11: springs / axles stretched to the wheel center (revolt_length_m), pin offsets, car mipmaps on again
 // 12: car aerials in own `_solid` materials without alpha mask (the mite aerial was cut away by the color key)
 // 13: gfx/font.png is the font of the project (ui/font.png: RVGL's font.bmo, 512 x 512) - the font.bmp of the re-volt.io download had its glyphs a texel higher
-pub const ASSET_VERSION: u32 = 13;
+// 14: level big cubes merged into 80 m cells (muse2 460 -> ~120 primitives), car hull spheres as JSON (revolt_spheres) instead of empty nodes
+pub const ASSET_VERSION: u32 = 14;
 pub const FILE: &str = "convert.json";
 const FORMAT: u32 = 1;
 

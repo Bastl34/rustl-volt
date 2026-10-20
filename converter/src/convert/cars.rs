@@ -295,7 +295,7 @@ pub fn convert(settings: &Settings, car: &str, log: &Log) -> Result<ConvertedCar
     }
     lines.iter().for_each(|line| log.info(line.as_str()));
 
-    log.step("4  Collision (.hul --> hidden convex hulls + sphere nodes)");
+    log.step("4  Collision (.hul --> hidden convex hulls + spheres as JSON)");
     let mut sphere_count = 0;
     let mut hull_volume = 0.0;
     match params.top.text("COLL").and_then(|coll| game_file(&settings.game_dir, coll).map(|file| (coll, file)))
@@ -307,18 +307,14 @@ pub fn convert(settings: &Settings, car: &str, log: &Log) -> Result<ConvertedCar
             {
                 Ok(hull) =>
                 {
-                    let (mut nodes, volume, skipped) = bodies::hull_nodes(&mut glb, &hull, scale);
+                    let (nodes, volume, skipped) = bodies::hull_nodes(&mut glb, &hull, scale);
                     hull_volume = volume;
-                    for (i, sphere) in hull.spheres.iter().enumerate()
-                    {
-                        let mut extras = bodies::hidden();
-                        extras["revolt_sphere_radius"] = json!((sphere.radius * scale) as f64);
-                        nodes.push(glb.node(json!({ "name": format!("collision_sphere_{i}"), "translation": place(sphere.center), "extras": extras })));
-                    }
+                    // a JSON string, not empty nodes - every node of a car is moved every frame
+                    let spheres: Vec<[f64; 4]> = hull.spheres.iter().map(|sphere| { let [x, y, z] = place(sphere.center); [x as f64, y as f64, z as f64, (sphere.radius * scale) as f64] }).collect();
                     sphere_count = hull.spheres.len();
-                    log.info(format!("  {coll}: {} hulls ({volume:.5} m³), {sphere_count} spheres (empty nodes, radius in the extras)", hull.hulls.len() - skipped));
+                    log.info(format!("  {coll}: {} hulls ({volume:.5} m³), {sphere_count} spheres (x, y, z, radius in revolt_spheres of the collision node)", hull.hulls.len() - skipped));
                     if skipped > 0 { log.warn(format!("  {skipped} hulls with broken values left out")); }
-                    children.push(glb.node(json!({ "name": "collision", "children": nodes })));
+                    children.push(glb.node(json!({ "name": "collision", "children": nodes, "extras": { "revolt_spheres": serde_json::to_string(&spheres)? } })));
                 },
                 Err(err) => log.warn(format!("  {coll}: {err:#} - no collision")),
             }

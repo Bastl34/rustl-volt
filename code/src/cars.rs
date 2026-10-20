@@ -260,8 +260,10 @@ pub fn setup_start_cars(scene: &mut Scene)
             {
                 let scale = find_child(&node, "model").and_then(|model| number(&model.read().unwrap(), "revolt_scale")).unwrap_or(0.01);
                 apply_camera(vehicle, scale);
-                vehicle.reset_chase_camera(scene);
             }
+            // the file keeps no camera link - without it the camera stayed at the start (toylite saved in the editor)
+            let cam_name = vehicle.cam_name.clone();
+            if let Some(error) = vehicle.attach_camera(scene, &cam_name) { console_warning!("cars: start car camera - {}", error); }
             continue;
         }
 

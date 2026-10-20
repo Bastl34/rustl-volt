@@ -1,4 +1,4 @@
-// level .w -> glb (one node per big cube, one primitive per material), .ncp -> collision glb, .fin -> model glbs, all into <level>.scene
+// level .w -> glb (one node per cell of big cubes, one primitive per material), .ncp -> collision glb, .fin -> model glbs, all into <level>.scene
 // <level>/reversed: the same world, the .fin / .taz / .pan / .fan of the reversed folder and STARTPOSREV - into <level>_reversed.scene
 // <level>[/reversed]/mirrored: everything mirrored left / right (mirror.rs), own asset folder <level>_mirrored - into <level>[_reversed]_mirrored.scene
 
@@ -14,6 +14,9 @@ use super::collision::{self, CollisionStats};
 use super::{bodies, clouds, effects, frontend, instances, lights, mirror, objects, scene, skybox, sounds, start_car, track, Log, Settings};
 use crate::glb::Glb;
 use crate::revolt::{find_file, MIRRORED, REVERSED};
+
+// the engine makes a node per primitive - per big cube muse2 had 460 for 12k triangles, the cpu paid for every one
+const LEVEL_CELL_M: f32 = 80.0;
 use crate::revolt::inf::Inf;
 use crate::revolt::lit;
 use crate::revolt::mesh::*;
@@ -122,7 +125,7 @@ pub fn convert(settings: &Settings, id: &str, log: &Log, progress: &dyn Fn(f32))
     let mut children = vec![];
     let mut triangles = 0;
 
-    let groups = group_meshes(&world);
+    let groups = group_meshes(&world, settings.scale);
     let group_count = groups.len();
     for (g, (group_name, mesh_ids)) in groups.into_iter().enumerate()
     {
@@ -159,7 +162,7 @@ pub fn convert(settings: &Settings, id: &str, log: &Log, progress: &dyn Fn(f32))
     log.step("4  Materials");
     writer.log_materials(log);
 
-    log.step("5  Nodes (one per big cube)");
+    log.step(format!("5  Nodes (big cubes in {LEVEL_CELL_M} m cells)"));
     node_lines.iter().for_each(|line| log.info(line.as_str()));
 
     log.step("6  Mirror planes (.rim --> empty nodes with extras)");
@@ -514,19 +517,28 @@ fn log_world(world: &World, scale: f32, log: &Log)
     }
 }
 
-// meshes grouped by big cube, meshes in no cube go into "rest"
-fn group_meshes(world: &World) -> Vec<(String, Vec<usize>)>
+// big cubes merged into square cells on the ground (by their center), meshes in no cube go into "rest"
+fn group_meshes(world: &World, scale: f32) -> Vec<(String, Vec<usize>)>
 {
     let mut used = vec![false; world.meshes.len()];
-    let mut groups = vec![];
+    let cell = LEVEL_CELL_M / scale;
+    let mut cells: BTreeMap<(i32, i32), Vec<usize>> = BTreeMap::new();
 
-    for (i, cube) in world.big_cubes.iter().enumerate()
+    for cube in &world.big_cubes
     {
-        let ids: Vec<usize> = cube.meshes.iter().copied().filter(|&id| id < used.len() && !used[id]).collect();
-        for &id in &ids { used[id] = true; }
-        groups.push((format!("cube_{i:03}"), ids));
+        let key = ((cube.center[0] / cell).floor() as i32, (cube.center[2] / cell).floor() as i32);
+        let ids = cells.entry(key).or_default();
+        for &id in &cube.meshes
+        {
+            if id < used.len() && !used[id]
+            {
+                used[id] = true;
+                ids.push(id);
+            }
+        }
     }
 
+    let mut groups: Vec<(String, Vec<usize>)> = cells.into_values().enumerate().map(|(i, ids)| (format!("cell_{i:03}"), ids)).collect();
     let rest: Vec<usize> = (0..used.len()).filter(|&id| !used[id]).collect();
     groups.push(("rest".to_string(), rest));
     groups
