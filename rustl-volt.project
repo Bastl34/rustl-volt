@@ -5,7 +5,7 @@
   },
   "project": {
     "name": "rustl-volt",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "author": "",
     "description": "",
     "license": "",
@@ -41,7 +41,7 @@
       "shadow": true,
       "shadow_map_resolution": 2048,
       "shadow_max_distance": 100.0,
-      "ssao": true,
+      "ssao": false,
       "ssao_bias": 0.02500000037252903,
       "ssao_half_res": false,
       "ssao_radius": 0.5,

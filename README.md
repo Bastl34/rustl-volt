@@ -4,6 +4,10 @@ A remake of Re-Volt on the [rustl](https://github.com/Bastl34/rustl) engine.
 
 No files of the original game are in this repository. Rustl-Volt converts them from your own copy the first time it starts.
 
+## Making of
+
+[![Making of Rustl-Volt](screenshots/making_of.webp)](https://www.youtube.com/watch?v=0CBxMKopNmY)
+
 ## Screenshots
 
 ![Menu](screenshots/screenshot_menu.webp)
@@ -17,7 +21,7 @@ No files of the original game are in this repository. Rustl-Volt converts them f
 ## What you need
 
 - **The files of Re-Volt**, from one of two sources - the game asks at the first start:
-  - **re-volt.io**: the game downloads the packs of [re-volt.io](https://re-volt.io/downloads/misc) - the game files, the car box pictures of RVGL and the Dreamcast soundtrack (about 170 MB, into the user data folder).
+  - **re-volt.io**: the game downloads the packs of [re-volt.io](https://re-volt.io/downloads/misc) - the game files, the car box pictures of RVGL and the Dreamcast soundtrack (about 170 MB, into `revolt_io/` next to the game).
   - **Steam**: your installed Re-Volt ([store page](https://store.steampowered.com/app/287310/ReVolt/)). The game finds it on its own. If it does not, it asks you for the folder.
 
 ## Play

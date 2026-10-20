@@ -3,6 +3,7 @@
 
 # converted files of the original game - the .project keeps the scenes as links, the converter writes them
 assets/
+revolt_io/
 *.scene
 !boot.scene
 

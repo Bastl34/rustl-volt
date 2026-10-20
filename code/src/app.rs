@@ -43,7 +43,7 @@ use field::{Opponent, Slot};
 use frontend::Frontend;
 use hud::Hud;
 use laser::Lasers;
-use menu::{CarInfo, ChampionshipChoice, Menu, MenuEvent, RaceAction, RaceChoice, RaceMenu, RaceMenuKind, Shadows, Ssao, TrackInfo, VideoSettings, MENU_SOUND_SPEED};
+use menu::{CarInfo, ChampionshipChoice, Menu, MenuEvent, RaceAction, RaceChoice, RaceMenu, RaceMenuKind, Shadows, TrackInfo, VideoSettings, MENU_SOUND_SPEED};
 use rustl::input::keyboard::Key;
 use rustl::state::scene::components::component::ComponentItem;
 use music::Music;
@@ -140,7 +140,7 @@ pub struct Game
     // the fullscreen of the Video Settings last given to the window (exports only)
     fullscreen_applied: Option<bool>,
     // the graphics of the Video Settings last given to the engine, the project values before (back at Stop - the editor saves them)
-    graphics_applied: Option<(u32, Ssao, Shadows)>,
+    graphics_applied: Option<(u32, Shadows)>,
     graphics_before: Option<(u32, bool, bool, bool, u32)>,
     // the car of the player whose sounds are stereo (cars::set_own_car_sounds)
     own_car: Option<NodeItem>,
@@ -665,11 +665,11 @@ impl Game
         }
     }
 
-    // antialiasing, ambient occlusion and shadows of the Video Settings - also in the editor, Stop gives the project values back
+    // antialiasing and shadows of the Video Settings, no ambient occlusion - also in the editor, Stop gives the project values back
     fn update_graphics(&mut self, state: &mut State)
     {
         let video = self.video();
-        let graphics = (video.msaa, video.ssao, video.shadows);
+        let graphics = (video.msaa, video.shadows);
         if self.graphics_applied == Some(graphics) { return; }
         let rendering = &mut state.rendering;
         if self.graphics_before.is_none()
@@ -677,8 +677,8 @@ impl Game
             self.graphics_before = Some((*rendering.msaa.get_ref(), rendering.ssao, rendering.ssao_half_res, *rendering.shadow.get_ref(), *rendering.shadow_map_resolution.get_ref()));
         }
         rendering.msaa.set(video.msaa);
-        rendering.ssao = video.ssao != Ssao::Off;
-        rendering.ssao_half_res = video.ssao == Ssao::Half;
+        // everything of the game is unlit - the shader takes no ambient occlusion there, the pass would only cost
+        rendering.ssao = false;
         rendering.shadow.set(video.shadows != Shadows::Off);
         if let Some(resolution) = video.shadows.resolution() { rendering.shadow_map_resolution.set(resolution); }
         self.graphics_applied = Some(graphics);

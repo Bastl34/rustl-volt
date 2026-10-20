@@ -1,5 +1,6 @@
 # converted files of the original game - never committed, the converter writes them (the game at its first start)
 /assets/
+/revolt_io/
 *.scene
 !/boot.scene
 convert.log

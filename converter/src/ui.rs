@@ -151,14 +151,10 @@ impl ConverterApp
         self.receiver = Some(receiver);
     }
 
-    // re-volt.io into the user data folder of the game (the game finds it there too)
+    // re-volt.io into the project folder (the game finds it there too)
     fn start_download(&mut self)
     {
-        let Some(dir) = download::default_dir() else
-        {
-            self.log.push(LogLevel::Error, "no user data folder for the download".to_string());
-            return;
-        };
+        let dir = download::dir(Path::new(&self.project_dir));
         let (sender, receiver) = channel();
         let log = Log::new(sender);
         let (target, music) = (dir.clone(), self.download_music);
@@ -229,7 +225,7 @@ impl ConverterApp
                     self.scan();
                 }
                 if ui.button("Find in Steam").clicked() { self.find_game(); }
-                let megabytes = download::default_dir().map_or(0, |dir| download::missing_megabytes(&dir, self.download_music));
+                let megabytes = download::missing_megabytes(&download::dir(Path::new(&self.project_dir)), self.download_music);
                 let label = if megabytes > 0 { format!("Download from re-volt.io ({megabytes} MB)") } else { "Use re-volt.io download".to_string() };
                 if ui.add_enabled(!running, egui::Button::new(label)).on_hover_text(download::SITE).clicked() { self.start_download(); }
                 ui.checkbox(&mut self.download_music, "with soundtrack");

@@ -11,8 +11,6 @@ use zip::ZipArchive;
 use crate::convert::Log;
 
 pub const SITE: &str = "https://re-volt.io/downloads/misc";
-// below the user data folder of the game (the engine's save_folder), next to the save data
-const GAME_FOLDER: &str = "rustl-volt";
 const FOLDER: &str = "revolt_io";
 // the finished packs and the downloads in progress
 const STATE_FOLDER: &str = ".downloads";
@@ -52,24 +50,10 @@ fn keep_music(name: &str) -> bool
     name.starts_with("redbook/")
 }
 
-// <user data>/rustl-volt/revolt_io - None if the system has no user folder
-pub fn default_dir() -> Option<PathBuf>
+// <project>/revolt_io - next to the converted files
+pub fn dir(project_dir: &Path) -> PathBuf
 {
-    let env = |name: &str| std::env::var_os(name).filter(|value| !value.is_empty()).map(PathBuf::from);
-    let base = if cfg!(target_os = "windows")
-    {
-        env("APPDATA")
-    }
-    else if cfg!(target_os = "macos")
-    {
-        env("HOME").map(|home| home.join("Library").join("Application Support"))
-    }
-    else
-    {
-        env("XDG_DATA_HOME").or_else(|| env("HOME").map(|home| home.join(".local").join("share")))
-    }?;
-
-    Some(base.join(GAME_FOLDER).join(FOLDER))
+    project_dir.join(FOLDER)
 }
 
 // every pack of the run is extracted already

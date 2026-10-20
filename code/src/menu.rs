@@ -395,27 +395,16 @@ pub struct VideoSettings
     pub fullscreen: bool,
     pub show_fps: bool,
     pub msaa: u32,
-    pub ssao: Ssao,
     pub shadows: Shadows,
 }
 
 impl Default for VideoSettings
 {
-    fn default() -> Self { Self { fullscreen: false, show_fps: true, msaa: 8, ssao: Ssao::Full, shadows: Shadows::Medium } }
+    fn default() -> Self { Self { fullscreen: false, show_fps: true, msaa: 8, shadows: Shadows::Medium } }
 }
 
 // antialiasing samples of the Video Settings (1 = off) - the engine clamps to what the gpu has
 pub const MSAA_STEPS: [u32; 4] = [1, 2, 4, 8];
-
-#[derive(Clone, Copy, PartialEq, rustl::serde::Serialize, rustl::serde::Deserialize)]
-#[serde(crate = "rustl::serde")]
-pub enum Ssao { Off, Half, Full }
-
-impl Ssao
-{
-    pub const ALL: [Ssao; 3] = [Ssao::Off, Ssao::Half, Ssao::Full];
-    pub fn label(self) -> &'static str { match self { Ssao::Off => "Off", Ssao::Half => "Low", Ssao::Full => "High" } }
-}
 
 #[derive(Clone, Copy, PartialEq, rustl::serde::Serialize, rustl::serde::Deserialize)]
 #[serde(crate = "rustl::serde")]
@@ -1168,7 +1157,7 @@ impl Menu
                 items
             },
             Screen::Options => vec![item("Game Settings", true), item("Video Settings", true), item("Audio Settings", true), item("Controller Settings", true), item("View Credits", false)],
-            Screen::VideoSettings => vec![item("Fullscreen", true), item("Show FPS", true), item("Antialiasing", true), item("Ambient Occlusion", true), item("Shadows", true), item("Reset to Defaults", true)],
+            Screen::VideoSettings => vec![item("Fullscreen", true), item("Show FPS", true), item("Antialiasing", true), item("Shadows", true), item("Reset to Defaults", true)],
             Screen::GameSettings => vec![item("Number of Cars", true), item("Number of Laps", true), item("Difficulty", true), item("Pick ups", true), item("Speed Units", true)],
             Screen::AudioSettings => vec![item("Master Volume", true), item("Music Volume", true), item("Effects Volume", true)],
             Screen::Quit => vec![item("Yes", true), item("No", true)],
@@ -1229,8 +1218,7 @@ impl Menu
             0 => on_off(self.video.fullscreen),
             1 => on_off(self.video.show_fps),
             2 => match self.video.msaa.min(self.max_msaa.max(1)) { 1 => "Off".to_string(), samples => format!("{samples}x") },
-            3 => self.video.ssao.label().to_string(),
-            4 => self.video.shadows.label().to_string(),
+            3 => self.video.shadows.label().to_string(),
             _ => String::new(),
         }
     }
@@ -1248,8 +1236,7 @@ impl Menu
                 let steps: Vec<u32> = MSAA_STEPS.iter().copied().filter(|&samples| samples <= self.max_msaa.max(1)).collect();
                 video.msaa = step_option(&steps, video.msaa.min(self.max_msaa.max(1)), up, wrap);
             },
-            3 => video.ssao = step_option(&Ssao::ALL, video.ssao, up, wrap),
-            4 => video.shadows = step_option(&Shadows::ALL, video.shadows, up, wrap),
+            3 => video.shadows = step_option(&Shadows::ALL, video.shadows, up, wrap),
             // the window stays as it is
             _ if wrap => *video = VideoSettings { fullscreen: video.fullscreen, ..VideoSettings::default() },
             _ => {},

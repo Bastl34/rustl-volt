@@ -59,7 +59,7 @@ enum Phase
     // nothing converted yet and no folder of an earlier run: the Steam files or the download of re-volt.io
     #[cfg(not(target_arch = "wasm32"))]
     Choose(Choice),
-    // re-volt.io: the packs into the user data folder - the conversion follows
+    // re-volt.io: the packs into revolt_io next to the converted files - the conversion follows
     #[cfg(not(target_arch = "wasm32"))]
     Downloading(Conversion),
     // Re-Volt not found: the folder picker opens by itself (cancel quits), a wrong folder is said here
@@ -249,11 +249,11 @@ impl Setup
         }
     }
 
-    // <user data>/rustl-volt/revolt_io, else next to the converted files
+    // next to the converted files (the folder of the exe, user data only if that is read only) - None before check
     #[cfg(not(target_arch = "wasm32"))]
     fn download_dir(&self) -> Option<PathBuf>
     {
-        revolt_converter::download::default_dir().or_else(|| self.target.as_ref().map(|target| target.join("revolt_io")))
+        self.target.as_deref().map(revolt_converter::download::dir)
     }
 
     // the packs on a worker thread - the conversion of the folder follows (downloaded)

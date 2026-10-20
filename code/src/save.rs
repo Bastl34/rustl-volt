@@ -10,7 +10,7 @@ use rustl::serde_json;
 
 use crate::assist::DriveMode;
 use crate::bot::Difficulty;
-use crate::menu::{AudioSettings, MultiSetup, PlayerSetup, Shadows, Ssao, VideoSettings, MAX_PLAYERS};
+use crate::menu::{AudioSettings, MultiSetup, PlayerSetup, Shadows, VideoSettings, MAX_PLAYERS};
 use crate::pad::Device;
 use crate::race::RaceSettings;
 
@@ -102,8 +102,6 @@ pub struct Video
     // older saves have no graphics - the defaults of the project
     #[serde(default)]
     pub msaa: Option<u32>,
-    #[serde(default)]
-    pub ssao: Option<Ssao>,
     #[serde(default)]
     pub shadows: Option<Shadows>,
 }
@@ -211,12 +209,12 @@ impl SaveData
     pub fn video_settings(&self) -> VideoSettings
     {
         let default = VideoSettings::default();
-        self.video.map_or(default, |v| VideoSettings { fullscreen: v.fullscreen, show_fps: v.show_fps, msaa: v.msaa.unwrap_or(default.msaa), ssao: v.ssao.unwrap_or(default.ssao), shadows: v.shadows.unwrap_or(default.shadows) })
+        self.video.map_or(default, |v| VideoSettings { fullscreen: v.fullscreen, show_fps: v.show_fps, msaa: v.msaa.unwrap_or(default.msaa), shadows: v.shadows.unwrap_or(default.shadows) })
     }
 
     pub fn set_video_settings(&mut self, video: &VideoSettings)
     {
-        self.video = Some(Video { fullscreen: video.fullscreen, show_fps: video.show_fps, msaa: Some(video.msaa), ssao: Some(video.ssao), shadows: Some(video.shadows) });
+        self.video = Some(Video { fullscreen: video.fullscreen, show_fps: video.show_fps, msaa: Some(video.msaa), shadows: Some(video.shadows) });
     }
 
     // a lap or race time - true if it is a new record
