@@ -16,6 +16,7 @@ use rustl::state::state::State;
 
 use crate::cars;
 use crate::random::Random;
+use crate::sounds;
 use crate::track::find_node;
 
 // cars in a race, the player included - the game: 2-12, 8 by default
@@ -61,6 +62,26 @@ pub struct Opponent
 }
 
 // the grid the converter wrote onto the start car: slot 0 is STARTPOS, then further back
+// Clockwork Carnage: its 30 slots of the converter - older assets: the same layout flat around the first slot (5 a row 0.8 m apart from 0.4 m left, rows 1 m back)
+pub fn grid_of(car: &Node, clockwork: bool) -> Vec<Slot>
+{
+    let slots = grid(car);
+    if !clockwork { return slots; }
+    let Some(json) = car.extras.get::<String>("revolt_grid").and_then(|text| serde_json::from_str::<Value>(text).ok()) else { return slots; };
+    let heading = slots.first().map_or(-Vector3::z(), |slot| slot.heading);
+    let converted: Vec<Slot> = json["clockwork"].as_array().into_iter().flatten().filter_map(|slot|
+    {
+        let v = |i: usize| slot[i].as_f64().map(|v| v as f32);
+        Some(Slot { floor: Vector3::new(v(0)?, v(1)?, v(2)?), heading })
+    }).collect();
+    if !converted.is_empty() { return converted; }
+    let Some(first) = slots.first().copied() else { return slots; };
+    let right = Vector3::new(-heading.z, 0.0, heading.x);
+    // slot 0 of the normal grid is STARTPOS shifted 1 m to the left
+    let start = first.floor + right * 1.0;
+    (0..crate::race::CLOCKWORK_CARS).map(|i| Slot { floor: start + right * (-0.4 + (i % 5) as f32 * 0.8) - heading * (i / 5) as f32, heading }).collect()
+}
+
 pub fn grid(car: &Node) -> Vec<Slot>
 {
     let Some(json) = car.extras.get::<String>("revolt_grid").and_then(|text| serde_json::from_str::<Value>(text).ok()) else { return vec![]; };
@@ -107,7 +128,8 @@ pub fn pick(player_car: &str, player_rating: u32, random: &mut Random) -> Vec<&'
 }
 
 // loads `count` opponents onto the slots: the next candidate where a glb is missing, the picked ones again if all are used up
-pub fn spawn(state: &mut State, scene_id: u32, assets: &str, candidates: &[&str], slots: &[Slot], count: usize) -> Vec<Opponent>
+// engine: one loop for all of them instead of the one of each car (Clockwork Carnage: the clockwork)
+pub fn spawn(state: &mut State, scene_id: u32, assets: &str, candidates: &[&str], slots: &[Slot], count: usize, engine: Option<&str>) -> Vec<Opponent>
 {
     let mut opponents: Vec<Opponent> = vec![];
     let mut tried = 0;
@@ -123,7 +145,7 @@ pub fn spawn(state: &mut State, scene_id: u32, assets: &str, candidates: &[&str]
         tried += 1;
 
         let Some(slot) = slots.get(opponents.len()).copied() else { break; };
-        match spawn_car(state, scene_id, assets, &car, &format!("{car}_bot{}", opponents.len() + 1), slot, None)
+        match spawn_car(state, scene_id, assets, &car, &format!("{car}_bot{}", opponents.len() + 1), slot, None, engine)
         {
             Ok(opponent) => opponents.push(opponent),
             Err(error) => { console_warning!("field: {} - {}", car, error); },
@@ -137,17 +159,29 @@ pub fn spawn(state: &mut State, scene_id: u32, assets: &str, candidates: &[&str]
 pub fn spawn_player(state: &mut State, scene_id: u32, assets: &str, car: &str, player: usize, slot: Slot, cam_name: &str) -> Result<NodeItem, String>
 {
     let name = if player == 0 { format!("{car}_player") } else { format!("{car}_player{}", player + 1) };
-    spawn_car(state, scene_id, assets, car, &name, slot, Some(cam_name)).map(|opponent| opponent.node)
+    spawn_car(state, scene_id, assets, car, &name, slot, Some(cam_name), None).map(|opponent| opponent.node)
 }
 
-// a car that drives by code without camera (the clockwork cars of the menu) - removed with `remove`
-pub fn spawn_extra(state: &mut State, scene_id: u32, assets: &str, car: &str, name: &str, slot: Slot) -> Result<Opponent, String>
+// a car that drives by code without camera (the clockwork cars of the menu - engine: their own sound) - removed with `remove`
+pub fn spawn_extra(state: &mut State, scene_id: u32, assets: &str, car: &str, name: &str, slot: Slot, engine: Option<&str>) -> Result<Opponent, String>
 {
-    spawn_car(state, scene_id, assets, car, name, slot, None)
+    spawn_car(state, scene_id, assets, car, name, slot, None, engine)
+}
+
+// the engine loop like the game: wincar4 the clockwork, the ufo its own, Class 0 moto, every other class petrol
+pub fn engine_sound(car: &str, class: u32) -> &'static str
+{
+    match car
+    {
+        "wincar4" => "clockwrk",
+        "ufo" => "ufo",
+        _ if class == 0 => "moto",
+        _ => "petrol",
+    }
 }
 
 // the car glb as a transient scene object with the sounds and a vehicle controller - a bot without camera, the player with one
-fn spawn_car(state: &mut State, scene_id: u32, assets: &str, car: &str, name: &str, slot: Slot, player_camera: Option<&str>) -> Result<Opponent, String>
+fn spawn_car(state: &mut State, scene_id: u32, assets: &str, car: &str, name: &str, slot: Slot, player_camera: Option<&str>, engine: Option<&str>) -> Result<Opponent, String>
 {
     let path = format!("{assets}/cars/{car}/{car}.glb");
     let options = LoaderOptions
@@ -170,11 +204,11 @@ fn spawn_car(state: &mut State, scene_id: u32, assets: &str, car: &str, name: &s
     let model_class = result.node_ids.iter().filter_map(|id| state.find_scene_by_id(scene_id)?.find_node_by_id(*id))
         .find_map(|node| { let node = node.read().unwrap(); (node.name == "model").then(|| node.extras.get::<i64>("revolt_class").copied()).flatten() });
     let class = model_class.map(|class| class as u32).or_else(|| OPPONENTS.iter().find(|(id, _, _)| *id == car).map(|(_, _, class)| *class)).unwrap_or(0);
-    let engine = if car.starts_with("wincar") { "clockwrk" } else if class == 1 { "petrol" } else { "moto" };
-    let source = |name: &str| state.resources.sound_sources.values().find(|source| source.read().unwrap().name == name).cloned();
-    let sounds: Vec<(&str, Option<_>, f32, bool)> = [(ENGINE_SOUND, source(engine), ENGINE_VOLUME, true)].into_iter()
-        .chain(CAR_SOUNDS.iter().map(|(component, sound, volume)| (*component, source(sound), *volume, true)))
-        .chain(HIT_SOUNDS.iter().map(|(component, sound)| (*component, source(sound), 1.0, false))).collect();
+    let engine = engine.unwrap_or_else(|| engine_sound(car, class));
+    // the scene sound list has the engines of the opponents - clockwork and ufo come from the assets
+    let mut sounds: Vec<(&str, Option<_>, f32, bool)> = vec![(ENGINE_SOUND, sounds::source(state, assets, engine), ENGINE_VOLUME, true)];
+    for (component, sound, volume) in CAR_SOUNDS { sounds.push((component, sounds::source(state, assets, sound), volume, true)); }
+    for (component, sound) in HIT_SOUNDS { sounds.push((component, sounds::source(state, assets, sound), 1.0, false)); }
 
     let scene = state.find_scene_by_id_mut(scene_id).ok_or("scene gone")?;
     let node = result.node_ids.iter().filter_map(|id| scene.find_node_by_id(*id)).find(|node| node.read().unwrap().root_node).ok_or("no root node")?;
@@ -231,6 +265,7 @@ pub fn show_car(state: &mut State, scene_id: u32, assets: &str, car: &str) -> Re
     let node = show_model(state, scene_id, &format!("{assets}/cars/{car}/{car}.glb"), &format!("{car}_shown")).map_err(|error| format!("{error} - convert the car"))?;
     cars::hide_pins(&node);
     cars::add_env_map(state, &node, assets);
+    node.write().unwrap().tags.insert(cars::SHOWN_CAR_TAG);
     Ok(node)
 }
 
@@ -263,6 +298,7 @@ pub fn show_model(state: &mut State, scene_id: u32, path: &str, name: &str) -> R
     }
     let children = node.read().unwrap().nodes.clone();
     for_each(&children, &mut |child| { let mut child = child.write().unwrap(); child.settings.collision = false; child.settings.camera_collision = false; });
+    crate::apply_additive(&children);
     // the loader gives the root no transformation - the menu moves the car with it
     if node.read().unwrap().find_component::<Transformation>().is_none()
     {

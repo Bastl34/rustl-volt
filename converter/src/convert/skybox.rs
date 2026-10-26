@@ -14,7 +14,7 @@ use crate::revolt::find_file;
 use crate::revolt::fob::Object;
 
 const SKYBOX: i32 = 55;
-// the "level" flag of the Skybox object: Toytanic day, Toytanic night, Wild West, Neighborhood (names from the exe)
+// the "level" flag of the Skybox object: Toytanic day, Toytanic night, Wild West, Neighborhood (names from the game)
 const SKY_SETS: [&str; 4] = ["ship1", "ship2", "wild_west1", "nhood1"];
 
 // file, direction the face is seen in (glTF), up of the image

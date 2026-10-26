@@ -1,11 +1,12 @@
 // the driving modes of the game (Select Mode: Simulation, Arcade, Console, Junior RC - formats/README.md "Driving modes") with own assists for the player car
-// the exe: from Console on, ground hits give the car no spin; Junior RC changes car values too - here: stability by damping roll and pitch,
+// the game: from Console on, ground hits give the car no spin; Junior RC changes car values too - here: stability by damping roll and pitch,
 // Junior RC also steers back onto the track near its edges (like the smart steering of kart games), turns a car around that drives the wrong way
 // and puts it back onto the track when it is lost (upside down, the wrong way, far off the track, stuck while the driver tries to drive)
 
 use rustl::prelude::*;
 use rustl::rapier3d::prelude::Vector;
 
+use crate::bot::{self, BotView};
 use crate::track::{AiPlace, Track};
 
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
@@ -22,15 +23,15 @@ pub enum DriveMode
 const STABILITY: [f32; 2] = [4.0, 8.0];
 // the car counts as upright from this up.y on - on its side or roof the recover is the way out
 const UPRIGHT: f32 = 0.3;
-// steering help: the car looks this far ahead, the edge zone is this share of the width on each side
+// steering help: s the car looks ahead for the edges, the edge zone is this share of the width on each side
 const LOOK_AHEAD: f32 = 0.4;
 const EDGE_ZONE: f32 = 0.2;
-// m ahead along the track the help aims for, steering per radian off that aim
-const AIM_AHEAD: f32 = 6.0;
-const AIM_GAIN: f32 = 2.5;
-// m/s below which the edge help does nothing, the turning around below the lower one
-const MIN_SPEED: f32 = 3.0;
+// m of racing line the help follows
+const LINE_LENGTH: f32 = 16.0;
+// m/s below which the help does nothing
 const MIN_TURN_SPEED: f32 = 1.0;
+// 1/s the weight of the help changes by - in and out without a jolt of the wheels
+pub const BLEND_RATE: f32 = 5.0;
 // share of the steering the turning around takes
 const TURN_BACK_WEIGHT: f32 = 0.85;
 // Junior RC puts the car back onto the track after this many s: upside down, the wrong way (after the 1 s of the HUD), far off the track
@@ -66,14 +67,14 @@ impl DriveMode
     {
         match self
         {
-            DriveMode::Simulation => "No driving aids, no sliding along walls",
-            DriveMode::Arcade => "Like the game: slides along walls",
+            DriveMode::Simulation => "No driving aids, no sliding along walls, bumps from cars spin",
+            DriveMode::Arcade => "Like the game: slides along walls, bumps from cars do not spin",
             DriveMode::Console => "Arcade + a steadier car, bumps do not flip it",
             DriveMode::JuniorRc => "Console + keeps you on the track, puts you back when lost, bots wait",
         }
     }
 
-    // sliding along walls (the engine wall slide) - off only in Simulation
+    // sliding along walls (the engine wall slide) and car hits through the centers (center hits, the game from Arcade on) - off only in Simulation
     pub fn wall_slide(self) -> bool
     {
         self != DriveMode::Simulation
@@ -103,39 +104,40 @@ pub fn stabilize(scene: &mut Scene, id: u32, mode: DriveMode, dt: f32)
     body.set_angvel(yaw + (spin - yaw) * keep, true);
 }
 
-// Junior RC: (steer, weight) for the vehicle steer assist - near an edge, or heading out of it soon, the car is steered back along the track
-// speed: m/s along the car, negative backwards - backwards the steering turns the car the other way
-pub fn steer_back(track: &Track, place: Option<AiPlace>, position: Vector3<f32>, forward: Vector3<f32>, right: Vector3<f32>, speed: f32) -> Option<(f32, f32)>
+// Junior RC: (steer, weight) for the vehicle steer assist - near an edge, now or a moment ahead, the car is steered along the racing line
+// like a bot, the driver drives everywhere else; view.speed negative backwards
+pub fn steer_back(track: &Track, place: Option<AiPlace>, view: &BotView) -> Option<(f32, f32)>
 {
     let place = place?;
-    if speed.abs() < MIN_TURN_SPEED || !track.has_ai() { return None; }
+    if view.speed.abs() < MIN_TURN_SPEED || !track.has_ai() { return None; }
     let along = track.segment_direction(place.node, place.next);
-    // the wrong way: the nose turned towards the track direction the shorter way round
-    if Vector3::new(forward.x, 0.0, forward.z).dot(&along) < 0.0
+    // the wrong way: the nose turned towards the track direction the shorter way round, backwards the steering turns the car the other way
+    if Vector3::new(view.forward.x, 0.0, view.forward.z).dot(&along) < 0.0
     {
-        let steer = if along.dot(&right) > 0.0 { -1.0 } else { 1.0 };
-        return Some((steer * speed.signum(), TURN_BACK_WEIGHT));
+        let steer = if along.dot(&view.right) > 0.0 { -1.0 } else { 1.0 };
+        return Some((steer * view.speed.signum(), TURN_BACK_WEIGHT));
     }
-    // the edge help looks ahead - not while backing up
-    if speed < MIN_SPEED { return None; }
+    // backing up is the driver's way out
+    if view.speed < 0.0 { return None; }
 
-    // the share across the track (0 left edge, 1 right edge) now and a moment ahead
+    let ahead = view.position + view.forward * view.speed * LOOK_AHEAD;
+    let share = [view.position, ahead].iter().filter_map(|p| across(track, track.ai_place(*p, Some(place))?, *p)).map(|a| a.min(1.0 - a)).fold(f32::MAX, f32::min);
+    let weight = ((EDGE_ZONE - share) / EDGE_ZONE).clamp(0.0, 1.0);
+    if weight <= 0.0 { return None; }
+
+    let line = bot::line_ahead(track, place, view.position, LINE_LENGTH, 0.0, 0);
+    Some((bot::steer_along(view, &line), weight))
+}
+
+// the share across the track at a position (0 left edge, 1 right edge, beyond outside)
+fn across(track: &Track, place: AiPlace, position: Vector3<f32>) -> Option<f32>
+{
     let left = track.ai_point(place.node, 0.0).lerp(&track.ai_point(place.next, 0.0), place.t);
     let edge = track.ai_point(place.node, 1.0).lerp(&track.ai_point(place.next, 1.0), place.t) - left;
     let width = Vector3::new(edge.x, 0.0, edge.z);
     if width.norm_squared() < 0.01 { return None; }
-    let across = |p: Vector3<f32>| { let d = p - left; Vector3::new(d.x, 0.0, d.z).dot(&width) / width.norm_squared() };
-    let ahead = position + forward * speed * LOOK_AHEAD;
-    let share = across(position).min(across(ahead)).min(1.0 - across(position).max(across(ahead)));
-    let weight = ((EDGE_ZONE - share) / EDGE_ZONE).clamp(0.0, 1.0);
-    if weight <= 0.0 { return None; }
-
-    // aim at the middle of the track a bit ahead
-    let aim = left + edge * 0.5 + along * AIM_AHEAD;
-    let to_aim = aim - position;
-    let angle = to_aim.dot(&right).atan2(to_aim.dot(&forward));
-    // positive steering is left, the angle is positive to the right
-    Some(((-angle * AIM_GAIN).clamp(-1.0, 1.0), weight))
+    let d = position - left;
+    Some(Vector3::new(d.x, 0.0, d.z).dot(&width) / width.norm_squared())
 }
 
 // Junior RC: stuck while the driver tries to drive - by the way made, not the speed

@@ -365,7 +365,7 @@ The names in quotes are the option labels of the editor in the exe (a list next 
 
 ## .inf
 
-Text, one `KEY value ;comment` per line, keys case-insensitive, strings in single quotes.
+Text, one `KEY value ;comment` per line, keys case-insensitive, strings in single quotes. Numbers may be split by commas too: bot_bat writes `STARTPOS 6000, -50, -120`.
 
 | Key | Value | Meaning |
 |---|---|---|
@@ -441,7 +441,7 @@ Speeds up the lookup in the original. Not needed with rapier.
 The material table of `revolt.exe`: 27 records of 40 bytes, found by the ICE2 values (0.45, 0.45, 0.2). Names from the Blender add-on (table order). Roughness, grip and hardness match RVGL `properties_default.txt`; the conveyor velocities do not (RVGL: `0 -500 0` / `0 500 0`). conveyor1 / conveyor2 are the two escalators of muse2 (22 sloped polygons each, a stair down along +x / -z); their velocities (500 units/s) point along them, but the vertical part has the opposite sign of the slope - projected onto the polygon plane, conveyor1 runs up, conveyor2 down. How the exe applies them to the wheels is not decoded (the remake: the tires grip relative to the moving surface).
 
 ```
-u32       flags                        4 out of bounds, 8 corrugated, 16 moves, 32 dusty; 1 and 2 unclear (spark / skid?)
+u32       flags                        1 sparks (a car scraping it, see Sparks), 4 out of bounds, 8 corrugated, 16 moves, 32 dusty; 2 unclear (skid?)
 f32       roughness
 f32       grip                         scales the tire friction
 f32       hardness
@@ -609,7 +609,7 @@ count × 68 bytes:
 | 3 | 14 | ? |
 | 4 | 11 | ? |
 | 5 | 27 | ? |
-| 6 | 2 | ? |
+| 6 | 2 | object thrower: flag = the ID of the thrower it sets off (nhood1 only) - see [Object thrower](#object-thrower-game-behaviour) |
 | 7 | 0 | ? |
 | 8 | 8 | ? |
 
@@ -647,7 +647,7 @@ Nothing in the `.fob` says an object is simulated - the type decides in code. Ri
 | 57 Bottle, 58 Bucket, 59 Cone, 66 Packet, 67 ABC Block | `<model>.hul` | 1.2, 1.5, 1.6, 1.6, 0.8 |
 | 36 Wobbly Cone | `cone.hul` | 0.5 |
 
-The ABC block init also sets an inertia of 600 on the diagonal (inverse 1/600). For comparison: the body of `rc` has mass 2.0. Friction and restitution of the objects are not decoded.
+The ABC block init also sets an inertia of 600 on the diagonal (inverse 1/600). For comparison: the body of `rc` has mass 2.0. Friction and restitution of the objects are not decoded. The remake makes the ABC blocks lighter than the game (0.08 instead of 0.8 - they stopped the cars like walls).
 
 The trolley is a car without drive in the original: `cars/trolley/Parameters.txt` (`Selectable TRUE`, `Obtain -1`) with `IsPowered FALSE` on the front wheels, 4 wheels `TrollWL.m` / `TrollWR.m`. Wheels at `Offset1` (see [Parameters.txt](#parameterstxt)). Placement (`.fob` position against the `.ncp` floor below): bottles, packets and ABC blocks sit within ±2 units on the floor, a shelf or the block below (stacks of 60 units). The trolleys hang 18–45 units above the floor (wheels at `Offset1` y 0) - they drop at the start. Not simulated (spin, move in code): 0 Spinning Barrel, 52 Tumbleweed (the remake: a very light sphere body), `firework.hul`, `Probe.hul`. The Wobbly Cone is a rigid body in the exe (outside mode 1 only) - the six of the frontend stand on the table of the options view, the clockwork cars knock them over (see [Frontend](#frontend-game-behaviour)).
 
@@ -662,14 +662,32 @@ Parts, as the converter places them (the game moves them every frame):
 - **Spring**: model along +y (rc: y 2–15, `Length` 16), from `Offset` towards the wheel. Stretched to the wheel center (distance / `Length`, rc 20.8 / 16) - the remake does that; from the screenshots, not checked in the exe. Axles the same (model along +z, `Length`).
 - **Axle**: model along +z (rc: z 0–12, `Length` 12), from `Offset` towards the wheel.
 - **Pin**: model along -y (rc: 15 long); placed on the wheel center + `Offset` - not checked.
-- **Aerial**: `misc/Aerial.m` is one section of length 1 along -y, `Aerialt.m` the top; `Length`, `Direction`, `Stiffness`, `Damping` - the game bends it in sections (count unknown). Both are textured with the car page at fixed uvs (~0.945, 0.947); on mite, cougar and tc5 the page is pure black there (the color key) - the remake draws the aerial without the key (black), the game not checked.
-- **Spinner**: a model turning around `Axis` with `AngVel` (unit not checked): wincar 1–4 the wind-up key (`key.prm`, -0.5), sgt the radar (`radar.prm`, 1.0), panga the head (`head.prm`, 0 - moved some other way?). The other cars have `ModelNum -1`. The ufo has no wheel models at all (it hovers) and no spinner.
+- **Aerial**: `misc/Aerial.m` is one section of length 1 along -y, `Aerialt.m` the top; `Length`, `Direction`, `Stiffness`, `Damping`. The car setup gives the aerial 3 spring points (mass 1 each, `Stiffness` and `Damping` as their spring, a section length of a model value / 5 - which one is not checked); the draw code puts 4 bent pieces on a spline through the foot and the points, the top on the last one. How the points move each frame is not decoded. The remake: 4 pieces on joints, bent evenly by one 2D spring (`Stiffness` 1/s², `Damping` 1/s, pushed by the acceleration of the foot - an own scale on top). Both are textured with the car page at fixed uvs (~0.945, 0.947); on mite, cougar and tc5 the page is pure black there (the color key) - the remake draws the aerial without the key (black), the game not checked.
+- **Spinner**: a model turning around `Axis` by `AngVel` × the frame time each frame - radians per second: wincar 1–4 the wind-up key (`key.prm`, -0.5), sgt the radar (`radar.prm`, 1.0). Panga (car 27) is special: the head (`head.prm`, `AngVel` 0) turns by 1.5 × a steering value of the car (most likely the wheel angle) and moves back / up a little with the forward speed (`v · look × 0.001`, clamped to ±1: × 6 back, × 3 up, units). The other cars have `ModelNum -1`. The ufo has no wheel models at all (it hovers) and no spinner.
 
 - **CoM** is relative to the center of the body bounds ("model centre", the body `Offset` is "calculated in game"), not to the origin: from the origin it lies below the wheel bottom for 10 cars (amw, fone, moss, mud, sgt, toyeca, wincar 1–3, trolley), from the body center it is above the ground and in the lower body for all 35 (trolley: low in the basket). Not checked against the game code.
 - **Inertia** (BODY, 3 × 3, diagonal only): mass × units², × scale² gives kg m². rotor: wheels at ±41 units next to a body of ±18 - a box of the body gives a roll inertia 6 times too small and the springs make it jump; with the BODY Inertia all 33 cars with wheels settle calmly (simulated).
 - **q** and **ufo** have no wheel models (all `ModelNum` of their wheels are NONE).
+- **ufo** (car 33) gets its own move handler at creation, run before the normal car physics every frame (not while the car is being repositioned). Units of the game (y down, the car's up row `U` is (0, 1, 0) when upright), mass 1:
+  - Righting: angular momentum += (U × (0, 1, 0)) × 20000 × dt - pulls the car upright from any tilt (0 only when exactly upright or exactly on its roof).
+  - Air spin damping: the angular resistance scale while no wheel touches (`ResMod`, 25 for the other cars) is 40. Every car: spin × (1 - `AngRes` × scale × 120 × dt), the scale only in the air - ufo 4.8/s.
+  - Thrust: velocity += look × |U.y| × voltage × 2000 × dt (the motor voltage -1..1, it follows the throttle at `EngineRate` per s and drops to 0 when the direction changes); side slip: velocity += right × (velocity · right) × -5 × dt.
+  - Lift: while not rising (velocity y >= 0, also on the ground) and upright, velocity += U × -(0.8 × 2200 × dt) - 80 % of the gravity is gone, it floats.
+  - Yaw: angular momentum += U × steering (-1..1, it follows the input at `SteerRate`) × 15000 × dt.
+  - So the original ufo hardly rolls over: jumps land upright, a tilt on the ground rights itself; lying exactly on its roof it stays.
+  - The remake (`cars::Hover`, project code, no engine change): the same rules on the rapier body before the step, angular momentum × scale² × (body mass / game body mass), steering sign so that left yaws left. Replaces the guessed 0.35 gravity in the air. Own: no counter steer; the lift only while no wheel touches (on the ground the 20 % weight left the tires without grip and the ufo steered late - the original steers as quickly as the other cars), and the yaw torque only in the air (on the ground the wheels steer, both together turned too much). The game's ufo grips with 2.5 on 20 % of its weight (= 0.5) - a tire grip × 0.6 for ours was worse for the user, reverted. `SteerMod` of Parameters.txt is copied into the car but read nowhere.
 
-The meaning of the handling values (TopSpeed, EngineRate, Grip, StaticFriction, ...) is still open.
+- **Steering**: the steering value (-1..1, negative = left) follows the input: keys ±1, a stick squared (value × |value| / 127²). Its rate is `SteerRate` × 0.5 while input and value have the same sign, × 4 back to the middle (no input) or across / from 0 (× 1/3 while zapped). A turnable wheel turns by `SteerRatio` × the steering in **radians** (rc -0.5 = 29°, ufo / amw / cougar / panga / sgt / toyeca -0.25 = 14°). The remake: `max_angle` = the largest |SteerRatio| in degrees, the same rates.
+
+- **Tires** (every wheel contact, every physics step of 8 ms, units of the game): the contact gets grip = wheel `Grip` × surface grip, static / kinetic friction = wheel `StaticFriction` / `KineticFriction` × surface roughness (see Surfaces). The normal impulse is the spring impulse along the contact normal (plus a rigid contact impulse only when the wheel axis tilts more than about 25° against the normal).
+  - Side: an impulse against the side slip velocity of the tread (its velocity minus the part along the rolling direction), 0.35 × grip × |spring impulse| × 120 dt × that velocity - linear in the side slip speed, not in the slip angle (rc: the static limit at about 300 units/s of side slip, at top speed a slip angle of about 6°).
+  - Drive: motor voltage × `EngineRatio` × dt, less the closer wheel spin × radius gets to `TopSpeed`. Axle friction while coasting or when the voltage works against the spin: `AxleFriction` × spin × radius × 120 dt (× 3 for a locked wheel).
+  - Limit: side and drive impulse together are capped at 4 × body mass × body `Gravity` × dt, then at static friction × normal impulse; past that they are set to kinetic friction × normal impulse (the wheel slides). Kinetic lies 0-10 % below static, the rear wheels mostly grip as much or more than the front (adeon, amw, panga, phat, rotor) - no grip drop at the limit, the cars push wide rather than spin.
+  - Friction values of the 35 cars: static 1.1 (wincar 1-3) - 2.5 (ufo), most 1.5-1.9.
+- **DownForceMod** (2 for every car): only while the two wheels of one side touch and the other side is up - an impulse along the car's down axis of `DownForceMod` × forward speed × dt × min(1.5 - |up.y|, 1), it pushes a car on two wheels back down. No downforce otherwise.
+- The remake drives on the ray cast vehicle of the engine: one grip for every car (the preset of its size, 2.0 / 2.1), the engine's counter steer stays on (without it the user found the cars worse; off for the ufo), car against car through the centers like Arcade (engine `center_hits`, off in Simulation).
+
+The meaning of the other handling values (`SteerMod` is read nowhere, body `Grip`, `Hardness`) is still open.
 
 ## Object motion (game behaviour)
 
@@ -906,6 +924,33 @@ Weapons by index (icon texels on fxpage2, 32 × 32):
 - Afterwards the icon is full white.
 - Firework pack / water balloons show the ammo as `%d` at (60, 102), 6 × 8, `0xFFFFAA22`.
 
+## Clockwork Carnage (game behaviour)
+
+Select Race -> Clockwork Carnage sets game mode 3 (the race setup switches on the mode: mode 3 builds this race). A normal lap race on the chosen track (Select Mode first, no car selection): the player and 29 AI cars, all car 32 (`wincar4`, "Clockwork") - 30 cars, the most the car table holds. The bots get the names of a table in the exe, bot n the name n - 1: Zed, Def Stef, Doc C, Gaztastic, CT Baynes, Fodge, Eoin, Roland, Matt DC, Tri Si, Goombah, Nutnut, Bliz, Rippance, Shehad, Jimlad, Kev, Big Mike, New York Jez, Traf, J, Eggy, Big Rich, Super Turk, Pab, Twan'Mobile, Berb, Gregm, Fungus, Liddon.
+
+Its own start grid (instead of the grid table of `STARTGRID`): slot i at x = (i mod 5) × 80 - 40, z = -(i div 5) × 100 (game units, rows going back), turned by the start rotation and added to STARTPOS - 5 cars a row, 6 rows. The player has slot 0. Unlocked in the game by a cup ("NEW GAME MODE! CLOCKWORK CARNAGE HAS BEEN UNLOCKED").
+
+The remake: the converter writes the 30 slots as `clockwork` into `revolt_grid` (floor from the .ncp), the bots take the front slots and the player the last one (like every race of the remake); no Single Race win is recorded, lap and race records are (with the car). The bots drive the green, yellow and red clockwork cars (wincar 1-3) at random, the player the white one - all with the clockwork engine loop.
+
+## Weapons (game behaviour)
+
+Firing creates an object at the car (its body position and matrix): Shockwave, Firework (also the pack, one per shot), Putty Bomb, Water Balloon, Electro Pulse, Oil Dropper, Ball Bearing, Turbo, a Pickup (the clone) or the Global Pulse. Units are the game's (100 = 1 m), y points down in the game - "up" below means against gravity (2200 units/s²).
+
+- **Shockwave**: a ball flying along the look axis at 6000 units/s (with the shock loop). After 0.25 s it bursts as soon as it moved slower than 1500 units/s in a frame (it hit something), or after 2 s. While it flies, every other car closer than 1000 units (the height counts ten times) is lifted with `(1 - d²/1000²) × mass × 4500` units/s² and rolled about its own look axis - the cars float up and turn over as it passes. The burst only shrinks the ball and its light over 0.25 s (128 sparks); the level and object meshes around it wobble (only a visual).
+- **Firework**: starts 35 units ahead of the car, launched at 1500 units/s plus the car velocity, a rocket body of mass 0.1 that thrusts along its nose and turns it towards its target - the car the HUD targets (other cars ahead in a cone within 6000 units, near and straight ahead preferred). It explodes within 100 units of any other car or after 1.2 s (firebang). The blast takes every car within 500 units: an impulse of `100000 / d²` units along the direction from the blast (d at least 75), `25000 / d` upwards, and a random spin.
+- **Putty Bomb**: the car carries a bomb with a fuse of 10 s (fuse loop). A car touching the carrier gets it, the giver can not get it back for 3 s. At 0 it goes off (puttbang): the car is thrown away from the surfaces within 128 units (`(128 - d) × (0.2 × mass + 0.4) × 10` along each face normal) with a random horizontal spin.
+- **Water Balloon** (3): thrown from 16 units up and 80 ahead with `(0, 500 up, 4000 ahead)` units/s plus the car velocity, spinning, a body of mass 0.6 (radius 45). It has a life of 500-2500: every bounce takes off the impact speed (wbombbounce, volume by the speed). It bursts (wbombhit, a splash) when the life is used up, when it touches a car, or after 30 s: every car within 700 units gets `100000 / d²` along the direction from it (d² at least 2500), `800000 / d²` upwards and a random spin.
+- **Electro Pulse**: the car carries the pulse for 10 s (electro loop). Every other car within 384 units with a free line of sight is zapped (when it is not still safe): 3 s without throttle, then 3 s safe from the next zap. Blue lightning arcs from the carrier to the cars in reach, the zapped car shows an electric skin.
+- **Oil Slick**: a dropper on the car (oildrop) puts at most 3 slicks behind it (its back along the look axis): one at once, the next after 64 units of travel, it ends after 1 s or the third. A slick falls (2048 units/s²) to the ground below it, lands with a radius of 32 and spreads towards 128 - 16 × n (128, 112, 96: `r += (target - r) × dt`), a square turned by a random angle; it goes after 30 s - one puddle, no trail. Every slick puts itself into a list each frame (x, z, radius, height range); a wheel whose contact point is in one is oily: its timer goes to 0, off the oil it counts up to 2.5 s. While it is below 2.5 the wheel grip is scaled by `(t + 0.2) × 0.5 / 2.7` (0.04 on the oil, half grip at the end) and the wheel leaves skid marks at full strength whenever it slides at all (else only above 450 units/s of sliding, colored by the surface) - an oily trail behind the car.
+- **Ball Bearing**: a heavy ball (mass 3, a car is about 1-2) put behind the car (1.5 × its length + 64 back), the car velocity minus 512 units/s along the look axis; its radius grows from 4 to 64 in 0.5 s, it shrinks in the last of its 30 s. The rolling sound follows its speed.
+- **Turbo**: a zapped car is freed of the zap instead (shock). Else 10 s: the top speed of the car `× (2 - t / 10)`, the grip of every wheel set to 2.
+- **Skins** (zapped car, turbo): a copy of the car body model, every vertex pushed 2 units out from the model centre, all polygons additive on texture page 27 (`fxpage1`). Every vertex gets a random angle (0..2π) and speed (zap 1..6, turbo 1..3, random sign); each step (1/120 s) the angle grows by speed / 120 and the vertex uv is `centre + radius × (sin a, cos a)` - so every polygon samples a moving piece of one spot of the page. Zap: centre (0.375, 0.375), radius 0.09375 (texels 96, 96 ± 24: the blue lightning tile), polygon gray `80 × zap seconds left` (240 fading to 0). Turbo: centre (0.375, 0.625), radius 0.039 (texels 96, 160 ± 10: the orange middle of the streak tile), gray 192, faded in over the first and out over the last 0.5 s (384 per s); the top faces (normal y < -0.95) of the copy are moved 6 units down. The turbo also puts an orange light on the car (radius 768, red `gray / 4 + rand(0..7)`, green half of it).
+- **Putty bomb carrier**: a value of the car goes towards -1000 (the car goes black), and while the fuse runs every 0.1 s 8 sparks fly off 8 points of the body model. The bomb object loads `ball.m` (additive, page 27, uv circle centre (0.14, 0.27) radius 0.047, speeds 5..10).
+- **Clone Pickup**: a pickup object put behind the car (its back minus 128 units). Taking it gives a putty bomb with no fuse - it goes off at once (puttbang).
+- **Global Pulse** (the global star): every other car is zapped at once (3 s), a flash on the screen.
+
+The remake (`shots.rs`) follows this with its own code and slightly different values (speeds, reaches, times); the fireworks steer more precisely, but about one in four aims beside the target and misses.
+
 ## Sounds and music (game behaviour)
 
 **Global sounds**: 43 `wavs\...` files loaded at start, the index is the sound id.
@@ -918,7 +963,28 @@ Weapons by index (icon texels on fxpage2, 32 × 32):
 | 19-28 | hit1, hit2, wbomb, wbombfire, wbombhit, wbombbounce, puttbang, fuse, oildrop, countdown |
 | 29-42 | turbo, servo, menuNext, menuPrev, menuUpDown, menuLeftRight, beachball, lightflk, bottle, boxslide, starfire, tvstatic, splash, honka |
 
-Which car plays which engine (0-3) is not found yet - the remake goes by `Class` (0 moto, 1 petrol), wincar* clockwrk, ufo ufo.
+The engine loop of a car (made with the car): car 32 (wincar4) clockwrk, car 33 (ufo) ufo, else `Class` 0 moto and every other class petrol (so wincar 1-3 and q moto, the trolley petrol). The frontend cars only get one when a flag is set (not decoded) - the remake gives the clockwork cars of the options view clockwrk.
+
+**Car sounds per frame** (the player struct of each car):
+- **Scrape** (3D loop while the body touches something): sound by the surface of the contact (table: scrape for every surface).
+- **Skid** (3D loop): the surface most of the skidding wheels are on picks the sound - skid_rough (id 8) on sand, carpettile, carpetshag, ice1-3, grass, pebbles, gravel, dirt1-3, else skid_normal (id 7); the sample is switched when it changes. Volume by the skid, frequency 15000 + 2 × speed.
+- **Servo** (only the local player car): while the steering angle moves more than 0.01 per frame the level rises 8/s up to 1, else it falls 8/s; a 3D loop of servo at volume level × 127, frequency 22050 + 10000 × level, 5000 lower while the angle decreases.
+- **Splash**: a car whose center is inside a water box (`.fob` 68, position ± the 3 ranges) plays splash once at the car (volume 127, 22050 Hz) and makes a burst of 34 particles; again only after it left the box.
+- **honka**: the horn of a network player (a flag of its packet), 3D at the car; in battle tag / mode 4 it also sends a message. **honkgood**: the cheat codes of the name entry and two debug paths - no horn of the local player.
+
+**Physics object hits**: once per frame an object that got a collision impulse (velocity change, units/s) above the threshold of its type plays its sound at the object: volume (v + offset) / 5 (0..127), frequency 22050 × (1 + (min((v - threshold) / divisor, max) + base) × 0.0595) - one semitone per step. Sounds above 42 are of the level block:
+
+| Object type | Sound | Offset | Threshold | Base | Divisor | Max |
+|---|---|---|---|---|---|---|
+| 1 Beachball | beachball | 0 | 300 | -1 | 2000 | 2 |
+| 43 BasketBall | block 0 (hood: basketball) | 0 | 300 | 0 | 3000 | 1 |
+| 57 Bottle | bottle | 200 | 100 | 0 | 3000 | 1 |
+| 59 Cone | block 12 (hood: roadcone) | -150 | 300 | 0 | 20000 | 1 |
+| 67 ABC block | block 8 (toy: toybrick) | 200 | 100 | -1 | 500 | 2 |
+| 66 Packet | block 7 (market: carton) | 200 | 100 | 0 | 2000 | 1 |
+| 52 Tumbleweed | block 6 (ghost: tumbweed) | 200 | 100 | 0 | 10000 | 0 |
+
+Football, bucket, trolley and the other objects have none.
 
 **Level sound blocks**: after the global sounds the block of the level is loaded, so its sounds get ids 43, 44, ... Blocks (in this order):
 
@@ -959,7 +1025,7 @@ Which car plays which engine (0-3) is not found yet - the remake goes by `Class`
 | 18 | Market icy | market/iceyarea | | | |
 | 19 | Muse escalator | muse/escalate | | | |
 
-**Music**: cd audio, the Steam version maps the cd tracks to `music/TrackNN.ogg`. The audio tracks 2..15 (at most 14) form a list, index 0 = cd track 2. `REDBOOK a b` of the `.inf` are indices into it: a random track of a..b is played on to the end of b; when it stopped the same range plays again from the picked track. So `REDBOOK 1 3` = Track03-05, `4 9` = Track06-11, `10 10` = Track12, frontend `0 0` = Track02. Track13 / Track14 play once somewhere - probably results / win music, the condition is not decoded. Settings `MusicOn`, `MusicVol`.
+**Music**: cd audio, the Steam version maps the cd tracks to `music/TrackNN.ogg`. The audio tracks 2..15 (at most 14) form a list, index 0 = cd track 2. `REDBOOK a b` of the `.inf` are indices into it: a random track of a..b is played on to the end of b; when it stopped the same range plays again from the picked track. So `REDBOOK 1 3` = Track03-05, `4 9` = Track06-11, `10 10` = Track12, frontend `0 0` = Track02. Back in the frontend after a championship the frontend range is replaced by one track played once: Track13 for a place 1-3 of the cup table, else Track14. Index 13 (Track15) plays in another frontend state (not decoded). Settings `MusicOn`, `MusicVol`.
 
 ## .lit
 
@@ -976,7 +1042,7 @@ vec3      right, up, look            a spot shines along look
 f32       cone                       degrees
 vec3      color                      0..255 and more (the frontend: 350)
 u8        flag                       1 world, 2 kept while racing, 4 moving models (unchecked), 16 not into the models
-u8        type                       0 omni, 1 omni normal, 2 spot, 3 spot normal
+u8        type                       0 omni, 1 omni normal, 2 spot, 3 spot normal, 4 square shadow
 u8        speed
 u8        pad
 ```
@@ -988,7 +1054,11 @@ The game adds the lights to the corner colors at load (world: flag 1; instances:
 - spots: `c = (-(d · look) / |d| - 1) * 180 / cone + 1`, nothing if `c <= 0`, else `a *= c`
 - each channel `+= color * round(a * 256) / 256`, clamped to 0..255
 
-The converter bakes them into the world, every lit instance (a model of its own) and the objects that do not move (also unchecked: the game lights objects at runtime).
+Type 4 ("Square Shadow" in the light editor) is no light: a box along the light axes whose half sizes are the three color fields (in units). The load bakes only types 0-3; type 4 gets its "not into the models" flag cleared. Most race levels have nearly only square shadows (ship1 213, ship2 174, nhood2 142 - all of type 4).
+
+After the load the game frees every light without flag 2; the kept ones light the moving models (cars) every frame the same way, per corner. A corner of a model inside a square shadow box gets the `SHADOWBOX` value of the `.inf` added to each channel, once even inside several boxes (default -96, ship2 -64) - the cars get dark under decks, roofs and trees.
+
+The converter bakes types 0-3 into the world, every lit instance (a model of its own) and the objects that do not move except pickups and stars (unchecked how the game lights objects). The kept lights and square shadows go into the level extras (`revolt_lights`); the app tints each car by them at its centre (car_light.rs).
 
 ## Frontend (game behaviour)
 
@@ -1108,16 +1178,115 @@ The piano keyboard of toylite. The `.tri` trigger type 0 (one box over the keybo
 - In a race the car gets weapon 10 (Global Pulse) at once - no spin, 1 shot. The other modes count the stars (practice, stunt arena) instead.
 - Game modes in the star handler: 2, 3, 4, 7 races (weapon), 6 battle tag (the star is the tagged thing), 8 practice (sets a 2 s timer - probably a message - and a found flag per level, may unlock a car - not decoded), 9 stunt arena (counts the stars).
 
+## Battle Tag (game behaviour)
+
+Game mode 6. In the original only a network mode (the decisions run on the machine of the local player and go out as messages) - the remake plays it against bots and in split screen.
+
+- Every player starts with a clock of 120000 ms (2:00). Only the clock of the car with the star runs down; at 0 that player is finished (the race clock is its time) - the first one wins.
+- All stars of the level are out (both types). A car whose box overlaps the box of a star (±30 units) takes it - also with a weapon in hand - the star rises and goes like a collected global star, the car gets the tag from whoever had it.
+- The holder carries an own object (type 51: rotating sprites over the car). While a car is closer than 512 units to the holder, it takes the model vertex of each car nearest to the other one and draws a lightning between those two points (green, see Lightning), with sparks (type 7) at both ends - about 50 per second. Each frame every other car that is not finished and not immune, closer than 384 units to the holder (center to center) and with a free line through the level, is a candidate - the nearest one takes the tag over. The car that lost it is immune for 2 s.
+- HUD: the own clock and the name of the holder with its clock (`mm:ss:ms`); strings "Battle Tag", "Battle Tag Time".
+- Pickups work as in races (weapons on); the collected ones are put out again over the network messages.
+- The arenas: nhood1_battle, bot_bat, muse_bat, markar (one zone, no `.pan`, no AI nodes - the remake's bots drive straight at the holder or flee to the arena point farthest from the others).
+
+## Object thrower (game behaviour)
+
+Object 42 (flags: ID, object type, speed, reuse) has no model and no handlers of its own; trigger type 6 sets it off. Checked in the exe:
+- Every frame every trigger box is tested against every car (the bots too - the triggers of type 1 and 2 only against local players). A car inside calls the handler of the type with two flags: "first call since the level was loaded" and "first car this frame".
+- The thrower handler does something only on the first call since the level was loaded - the first car that enters the box, once per level. It looks for the object thrower whose ID is the flag of the trigger and makes a new object of its type at the thrower's position and orientation (types 74 and up: another object handed in, not used by any level), velocity = speed × 50 units/s along the thrower's look axis. `reuse` is not read there.
+- nhood1: two throwers throw a basketball (ID 2: speed 80 = 4000 units/s, ID 1: speed 50), each from about 6 m up, angled upwards; their triggers lie across the road further on. wild_west2 has a thrower (a beachball, speed 0) but no type 6 trigger - it never throws. The reversed nhood1 has no type 6 triggers.
+
+- Both nhood1 throwers stand in back yards behind the invisible walls of the `.ncp` (vertical quads up to 27 m tall between the yards and the road, no floor behind them). The balls only reach the road if a wall does not push them from behind - so the `.ncp` polygons collide one sided for objects (their plane normal is the front, flag 2 = double sided). Inferred from this, the object collision code of the exe is not read.
+
+The remake: the converter writes the model of the thrown type (as a physics object glb) and names it in the thrower's extras (`revolt_thrown_source`, the thrower itself is not placed), the type 6 boxes go into the level extras (`revolt_track_throws`: id, center, axes, half size). The app code (`throwers.rs`) throws once per race (again after a restart), the thrown objects go on Stop. The thrown body has the engine setting `one_sided_meshes` (fixed triangle meshes push it only from their front side) - checked in a headless run: both balls fly over the walls, land on the road (nhood1 around (14.3, -88.3) and (14.3, 10.9) m) and come to rest there.
+
+## Lightning (game behaviour)
+
+One draw function for the arc of battle tag and the electro pulse: from A to B (each with an offset of 50 units up) along a cubic bezier with the inner points A + offset and B + offset, a point every 8 units (at most 64, `|B - A| / 8`). Every point is pushed by 3-5 units (1 in 8 frames) or 6-10 units along one of 32 random unit directions of a table; the start in the table changes every 20 ms, the push every frame, one more per point. On top a small sway (a sine of the time, not used by the remake). Drawn in screen space: one quad per segment (texture page 27 = fxpage1, u 209..215 green (battle tag) or u 216..222 blue (electro pulse) along the segment, v 33..47 across: dark - bright - dark), the quads share their edges - an inner point is pushed to both sides along the normalized sum of the perpendiculars of its two segments, the first and the last point along the one of their segment. Half width (projected world units): the end points 3 (4 × 0.75), the inner points a random value per frame of 2..6 - in the frames with the small push (1 in 8) 10..15, a short wide flash. The color is a random gray of 31..255 (steps of 32) every frame for all inner points, black at the first and the last point (additive, so the ends fade out).
+
+A second, straight variant without the bezier (always blue, white, half width 4 everywhere, 0 at both ends) is drawn between two points of some objects - not used by the remake.
+
+## Weather (game behaviour)
+
+- **Distance fog**: linear from `FOGSTART` to `FARCLIP` of the `.inf` in `FOGCOLOR`, the background is the same color. Every level has it, most only at the far edge (ship1 / ship2 280-290 m); toy2 from 55 m, muse1 from 80 m, markar from 70 m, the frontend from 70 m.
+- **Fog Box** (73): a box of the position ± x / y / z range. While a camera is inside it, that camera clears to black, the fog is black and the clouds are not drawn (wild_west2: the mine). Its data keeps the level fog color.
+- **Garden Fog** (72): its init returns 0, so the object is never made - garden1 has no fog of its own.
+- **Rain** (63, ship2): 500 drops, the first ones start 1 ms apart. A drop starts at the top edge of the view of the current camera (screen x across twice the width, depth -1000..3000 units, the ones behind the camera are not drawn), falls along the gravity direction at 1500 units/s (the ship rock tilts it). At the start a ray from 7500 units above to 7500 below the drop finds the first surface of the level: when it is above the camera the drop waits 1 s (no rain under a roof), without a surface the drop ends 1000 units below the camera. Drawn as a line from 0.05 s of its way behind it (color 0, alpha 0) to the drop (gray 0x60, alpha 255), alpha blended. Where it hits the surface: a splash sprite for 0.25 s, 4 frames of 16 px on fxpage1 from texel (144, 240), 8 units, gray 0x80. A drop leaving the view (above, below or out of the depth range) starts again at once.
+- **Lightning** (64, ship2): an omni normal light (world lights, kept while racing) at 10000 units above the level origin with a reach of 50000 - so every surface facing up. 10-40 s between flashes (also before the first), a flash lasts 0.2-0.5 s: its color is `round(1000 × sin(t × 2π / 0.3))` with t the time into the flash modulo 0.15 s, so 1-3 pulses of half a sine, far over the 255 of a full corner color (the lit surfaces go to full brightness). The thunder is a 3D sound object of its own (random play), not tied to the flash.
+
+## Sparks (game behaviour)
+
+The particles of the game ("sparks"): a pool of 1024, a new one is dropped when it is full. Every spark has a type (31, a table in the exe), a position, a velocity, an age and a few random values. Created with a type, a position, a velocity and a speed variation `v` (every axis gets a random `-v..v` added).
+
+Per type: half size x / y (units), a 16 × 16 or 64 × 64 tile of page 27 (fxpage1), a color, flags, mass, resistance, friction, restitution, life and life variation (the age starts at random × variation, so it lives `life - random × var`), spin (base, variation: `base + var/2 - random × var` rad/s, the angle starts random), size variation (random × it added to both half sizes), growth (base + random × variation units/s), the trail type (-1 none).
+
+Flags: 1 bounces off the level (the polygons of the collision grid, the line from the old to the new position), 2 bounces off physics objects and cars (their bounding boxes, then sphere / convex), 4 leaves a trail, 8 forces (gravity and the force fields: velocity += force / mass), 16 spins, 32 grows, 64 unclear, 128 additive (the brightness fades, `color × (life - age) / life`) - without it alpha blended (the alpha fades the same way), 256 a different sprite draw (only type 20).
+
+Per step: age += dt, dead at age > life; forces (8); `velocity × (1 - dt × resistance × 120)` (the resistance is per 1/120 s); position += velocity × dt; then the bounce - the part into the surface is taken off, everything × (1 - friction), the part into the surface back out × restitution. Spin and growth only in a frame without a bounce.
+
+| # | Name (RVGL) | Half size | Tile (texels) | Color | Flags | Mass | Resistance | Friction | Restitution | Life (var) | Spin var | Size var | Grow (var) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | spark | 1 | 240, 0 | white | 1 2 8 64 128 | 0.1 | 0.02 | 0.1 | 0.5 | 0.5 (0.05) | | | |
+| 1 | spark2 | 1 | 240, 0 | white | 128 | 0.1 | 0.02 | 0.1 | 0.5 | 0.3 (0.02) | | | |
+| 2 | snow | 5 | 224, 0 | white | 1 2 8 64 128 | 0.03 | 0.1 | 0.6 | 0.2 | 10 (5) | | | |
+| 3 | popcorn | 10 | 208, 0 | ff33ff | 1 2 8 64 128 | 0.3 | 0.01 | 0.7 | 0.8 | 10 | | | |
+| 4 | gravel | 3.5 | 192, 0 | 808080 | 1 2 8 64 | 0.1 | 0.02 | 0.7 | 0.5 | 1.5 (0.5) | | | |
+| 5 | sand | 2 | 240, 0 | white | 1 2 8 64 128 | 0.1 | 0.02 | 0.7 | 0.5 | 0.5 (0.1) | | | |
+| 6 | grass | 4 | 208, 0 | white | 1 2 8 16 | 0.1 | 0.02 | 1.0 | 0.5 | 1 (0.3) | 15 | | |
+| 7 | electric | 0.8 | 224, 16 | c0c0ff | 2 8 128 | 0.1 | 0.02 | 0.1 | 0.5 | 0.15 | | | |
+| 8 | water | 10 | 192, 16 | 4433dd | 1 2 8 64 128 | 0.03 | 0.001 | 0.8 | 0.2 | 2 (1) | | | |
+| 9 | dirt | 3.5 | 208, 16 | white | 1 2 8 | 0.03 | 0.001 | 0.4 | 0.2 | 1.5 (0.5) | | | |
+| 10 | smoke1 | 6 | 0, 0 (64) | 404040 | 1 2 16 32 128 | 0.03 | 0.002 | | | 0.5 (0.1) | 6 | 2 | 0 (36) |
+| 11 | smoke2 | 64 | 0, 0 (64) | 606060 | 1 2 16 32 128 | 0.03 | 0.02 | 0.001 | | 2.6 | 6 | | 40 (20) |
+| 12 | smoke3 | 4 | 0, 0 (64) | 404040 | 2 16 32 128 | 0.03 | | | | 1.5 (0.1) | 6 | 2 | 0 (36) |
+| 13 | blue | 4 | 224, 16 | 808080 | 128 | | | | | 0.5 | | | |
+| 14 | big blue | 4 | 224, 16 | 808080 | 8 128 | 0.1 | 0.02 | 0.1 | 0.5 | 0.5 (0.5) | | 8 | |
+| 15 | small orange | 18 | 192, 32 | white | 1 8 128 | 0.03 | 0.016 | | 0.4 | 1.2 (0.5) | | 2 | |
+| 16 | small red | 20 | 240, 32 | white | 1 4 8 128 | 0.03 | 0.012 | | 0.4 | 1.5 (0.5) | | 5 | |
+| 17 | explosion1 | 12 | 64, 0 (64) | white | 16 32 128 | 0.03 | 0.015 | 0.6 | | 0.5 | 6 | | 0 (128) |
+| 18 | explosion2 | 8 | 64, 0 (64) | white | 16 32 128 | 0.03 | 0.015 | 0.6 | | 0.5 (0.3) | 32 | | 12 (5) |
+| 19 | star | 8 | 241, 32 (15 × 16) | white | 32 128 | | | | | 0.5 | | | 30 |
+| 20 | probe smoke | 700 × 150 | a band of page 1 | white | 32 128 256 | | | | | 0.5 | | | 100 |
+| 21 | sprinkler | 3 | 192, 16 | 202028 | 8 32 128 | 0.03 | 0.01 | 0.2 | 0.2 | 0.9 | | | 8 (8) |
+| 22 | sprinkler big | 3 | 192, 16 | 08080a | 8 16 32 128 | 0.03 | 0.01 | 0.2 | 0.2 | 1 | 6 | | 128 (64) |
+| 23 | dolphin | 3 | 192, 16 | 404050 | 8 32 128 | 0.03 | 0.005 | 0.2 | 0.2 | 1.3 | | | 8 (8) |
+| 24 | dolphin big | 3 | 192, 16 | 101018 | 8 16 32 128 | 0.03 | 0.005 | 0.2 | 0.2 | 1.3 | 6 | | 96 (48) |
+| 25 | spark3 | 3 | 240, 0 | white | 1 2 8 64 128 | 0.1 | 0.002 | | 0.8 | 4 (0.05) | | | |
+| 26 | road dust | 6 | 0, 0 (64) | 404040 | 1 2 16 32 128 | 0.03 | 0.002 | | | 0.5 (0.1) | 6 | 2 | 0 (36) |
+| 27 | grass dust | 6 | 0, 0 (64) | 141b10 | as 26 | | | | | | | | 0 (36) |
+| 28 | soil dust | 6 | 0, 0 (64) | 1c1910 | as 26 | | | | | | | | 120 (20) |
+| 29 | gravel dust | 6 | 0, 0 (64) | 404040 | as 26 | | | | | | | | 0 (36) |
+| 30 | sand dust | 6 | 0, 0 (64) | 100800 | as 26 | | | | | | | | 60 (20) |
+
+Trails (flag 4, and objects that ask for one - the firework): a ring of points per trail, a new one every life / points s, the newest point follows the thing; drawn as a camera facing ribbon of quads, the newest piece with its own tile, narrower (width × (1 - i / points)) and darker towards the end, additive. Freed with its spark or object. Types (tiles of fxpage1, color, life s, half width units, points): 0 (small red sparks) 225, 33 (14 × 14), white, 0.3, 5, 12; 1 (spark, unused - type 0 has no flag 4) 246, 0 (2 × 16), white, 0.03, 1, 2; 2 (firework) head 224, 48, the rest 240, 48, 8888aa, 0.4, 10, 12.
+
+Where the game makes them:
+- **Car scraping a surface**: per contact of a car with a surface whose material has flag 1 (see Surfaces: default, marble, stone, glass, ice, metal, bump metal, pebbles, gravel, paving), sliding faster than 100 units/s: a chance of `(speed - 100) / 1500` (at most 1) for one spark (type 0), velocity -0.5 × the slide; at most 10 per frame for all cars.
+- **Wheels on dusty ground**: the dust type of the surface picks two types with a chance per step each - 1 pebbles / gravel: gravel 0.6, gravel dust 0.3; 2 sand: sand 0.2, sand dust 0.1; 3 grass: grass 0.8, grass dust 0.4; 4 dirt: dirt 0.4, soil dust 0.2; 5 paving: only road dust 0.2. The first one needs more wheel speed than the second one; both are thrown back and up from the contact.
+- **Spark Generator** (object 16): params type, average speed, speed variation, frequency - along its look axis at speed × 10 units/s, variation × 10, one every 5 / frequency s (at most 5 a frame).
+- **Train** (13): smoke2 every 0.1 s at `(0, -550, -196)` of the train, rising 350 units/s.
+- **Sprinkler** (40): 6 a frame while it runs, sprinkler and sprinkler big by turns, from `(0, 8, -24)` of the head, velocity `(0, -1300, -2000)` of the head, both × a random 0.2..1 × its pressure.
+- **Dolphin** (71): dolphin / dolphin big at random, velocity `(0, -500, -300)` × 1.2..1.4.
+- **Dragon** (5): not the spark table - its own 50 sprites, the blast tile of fxpage1 (64, 0, 64 × 64), additive. While the mouth is fully open (2-4 s of the 8 s cycle) 2 sprites every 20 ms at the head offset `(-494.2, 208, 96)` plus a random point up to 32 units around it, flying straight (no gravity, no hits) at `(-0.45, 2, 6) × 72` units/s of the dragon frame; life 0.5 s, size 16..24 growing 32 units/s, gray 255 fading to 0, random angle, spin ±0.72 turns/s. A light at the head from 2 to 4.5 s: reach 1024, orange (red 224..255 with flicker, green half of it), faded in over 2-2.5 s and out over 4-4.5 s.
+- **Laser** (flag object): a spark (type 0) where something blocks the beam, variation 200.
+- **Battle tag / electro pulse**: electric sparks (7) at both ends of the arc, variation 200.
+- **Shockwave**: blue sparks (13) behind the ball; the burst: 128 big blue (14) in random directions at 512..1024 units/s.
+- **Firework**: no sparks while it flies - trail 2 out of its back. **Blast**: 1 explosion1, 3 smoke2 (variation 60), 30 × small orange (variation 1200) and small red (variation 1400).
+- **Putty bomb**: while the fuse burns 2 spark2 a frame at the top of the aerial (with the car velocity, variation 50), every 0.1 s smoke3 off 8 points of the body (rising 80 units/s, variation 16).
+- **Podium**: spark3 for the fireworks.
+
+The remake (`code/src/particles.rs`, `emitters.rs`): the same 31 kinds with own values in m (the table above × 0.01, rounded, small changes), one instanced node per kind and scene (a quad of the tile of `models/sparks.png` = fxpage1 with black see through and its sprite tiles faded out round - the glows fill their tiles up to the edge, a square at the bigger sizes of the remake -, turned to the nearest camera, the uvs half a texel inside the tile), level bounces by a ray against the fixed colliders, no bounce off objects; trails 0 and 2 (`TrailKind`, one mesh per kind and scene rebuilt every frame, the remake's half widths 5 / 10 cm, the head of a trail nobody moves for 0.5 s ends), the podium rockets get trail 2 too. Own: the sparks (0, 1, 7, 25) are drawn stretched along their way across the view (0.025 s), the additive kinds × 1.4 (bloom), the water balloon bursts into 34 water drops. Not used: probe smoke (20), dolphins (the dolphin object is not built), popcorn, snow, star. The dragon fire is an own kind (`DragonFire`) after the 31, fired while the head morph is at 1 (no light); own: dark smoke out of it (`DragonSmoke`, alpha blended).
+
 ## Driving modes (game behaviour)
 
 Select Race -> Championship, Single Race, Clockwork Carnage, Time Trial and Practice go to a menu "Mode" with Simulation, Arcade, Console, Junior RC (strings of `strings/English.txt`); the stunt arena goes straight to the name. The choice (0-3) is copied into the race settings at the start. What reads it (partly decoded):
 
-- Arcade and up: car against car collisions take another path (not decoded).
-- Console and up: in the collision response of a car, a contact whose normal is steeper than 0.3 (|n.y| > 0.3, ground hits) gives no angular impulse - bumps and landings do not spin or flip the car.
-- Junior RC: at the car setup one car value is halved, another one × 0.6, a value of every wheel × 1.25 (which ones not decoded - speed / steering / grip likely).
+- Arcade and up: car against car is one ball per car (center and radius of its first collision sphere), the contact acts through both centers (lever arms 0) - a hit pushes the cars apart, it never spins them. Simulation collides hull against hull, wheels against the other body, wheel against wheel.
+- Console and up: in the collision response of a car body, a contact whose normal is steeper than 0.3 (|n.y| > 0.3, ground hits) gives no angular impulse - bumps and landings do not spin or flip the car. Wheel contacts the other way round: only those with |n.y| > 0.3 (ground) turn the car, a wheel against a wall does not.
+- Junior RC: at the car setup `SteerRate` is halved and `TopSpeed` × 0.6, a value of every wheel × 1.25 (not decoded).
 - No steering help in any mode.
 
-The remake (own assists, for the player cars): Simulation without the wall slide, Arcade as before (default), Console damps roll and pitch of the upright car (4/s), Junior RC more (8/s) and steers back onto the track near its edges (0.4 s look ahead, the outer 20 % of the width, aim at the middle 6 m ahead), turns a car driving the wrong way around and puts the car back onto the racing line ahead when it is lost: upside down 1.5 s, the wrong way 3 s (after the 1 s of the HUD), more than 3 m off the track 2 s, stuck 3 s (throttle or brake given but no more than 1.5 m away from where it was - jiggling in a corner counts, standing without input for more than 1 s does not). Backing up turns the steering of the help around.
+The remake (own assists, for the player cars): Simulation without the wall slide and with spinning car hits, Arcade as before (default), Console damps roll and pitch of the upright car (4/s), Junior RC more (8/s) and steers like the smart steering of kart games: near the edges (now or 0.4 s ahead, the outer 20 % of the width) it steers along the racing line like the bots (pure pursuit, at once, not through the steering rate), easing in and out at 5/s - the driver drives, hands off the car still stays on the track. Not slower (the game's TopSpeed × 0.6 felt too slow to the user). It turns a car driving the wrong way around and puts the car back onto the racing line ahead when it is lost: upside down 1.5 s, the wrong way 3 s (after the 1 s of the HUD), more than 3 m off the track 2 s, stuck 3 s (throttle or brake given but no more than 1.5 m away from where it was - jiggling in a corner counts, standing without input for more than 1 s does not). Backing up turns the steering of the help around.
 
 ## Practice (game behaviour)
 
@@ -1157,7 +1326,7 @@ Select Race -> Championship -> Select Mode -> name -> car -> Select Cup (views 6
 - Qualified = 3rd or better in the race ("CONGRATULATIONS! YOU QUALIFIED!", after the last race "CONGRATULATIONS! CHAMPIONSHIP FINISHED!"). Worse: "YOU FAILED TO QUALIFY!", "You have n Tries Left.  Try Again?" (Yes / No). 3 tries per cup; a failed race counts nothing; with no try left: "Game Over!  Better Luck Next Time!". Give Up Try (in-race menu) counts as a failed race.
 - The cup is won at the top of the table after the last race: the level flag 0x20 of its tracks is set, that opens the next cup (Bronze is always open).
 - **Podium** (frontend, views 18-23): 3 s the place in yellow (12 × 24, "%s %s!" = "YOU CAME 1ST!" at y 198, only for 1st-3rd); a first win of a cup adds at y 226 / 254 "SILVER CUP" / "GOLD CUP" / "SPECIAL CUP" (the string of the game for the 4th cup) + "IS UNLOCKED", Platinum: "Well done, you have mastered" / "all Re-Volt Championships!" (the "TRY TO COME HIGHER ..." and "You'll have to do better ..." lines need a flag that is never 0 there - not shown). Then the cars of the table are dropped from 10 m onto the podium places (game units (-1628, -1000, 1763) 1st, (-1801, -1000, 1588) 2nd, (-1448, -1000, 1950) 3rd, facing the cameras): on the podium 3rd, 2nd, 1st, 5 s each (camera: the first quarter stays, the middle half the close up view 22 / 21 / 20, the last quarter the overview 19), with the winner fireworks start (model `firework.m` from x -1884..-1372, y -700..-600, z 1507..2019, one every 0.1-2.6 s); below 3rd all three at once (7 s), then the player's car beside the podium (-1515, -1000, 1665) with a putty bomb (`ball.m`, view 23, 5 s). 3 s (5.5 s below 3rd) later the screen fades and the main menu comes - after the Platinum win the credits.
-- The remake: own spark star for the bursts (no particles yet), the bomb goes off after 8 s (puttbang, the car is thrown up).
+- The remake: own spark star for the bursts plus spark3 particles (see Sparks), the bomb goes off after 8 s (puttbang, the car is thrown up, the blast particles of the weapons).
 - Summary of a cup: the cup name in orange, "Place 3rd or better in each / race to progress!", then "Finish top of the table to / access the next challenge!" (Platinum: "Finish top of the table and / be crowned "Re-Volt Master"!").
 - The table (640 x 480, chars 8 x 16): x0 = (400 - 56 × race index) / 2; header at y 176 in cyan: "Car" at x0, the race numbers at x0 + 56 i + 152, "Pnts" centered at x0 + 56 race + 212; a row per car from y 208, 16 apart: the name (15 chars) white, the place per race ("1st", green) at x0 + 56 i + 144, the total (2 digits, yellow) and the `+n` (red) behind it. The messages centered at y 100 and 116.
 

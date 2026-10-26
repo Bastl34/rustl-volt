@@ -1,4 +1,4 @@
-// the .fob object types: index in the editor object table of revolt.exe (see formats/README.md)
+// the .fob object types: index in the editor object table of the game (see formats/README.md)
 // the models are matched by name - the game picks them in code
 
 pub struct ObjectType
@@ -83,7 +83,7 @@ const PLANETS: [&str; 11] = ["mercury", "venus", "earth", "mars", "jupiter", "sa
 
 // the main model of an object, relative to the game folder - None for objects without one (sounds, fog, sparks, ...)
 // only the body: rotors, wheels, sprinkler heads and so on are moving parts the game adds in code
-// the exe loads some object models with a page offset added to their textured polygons: beachball + speedup 27 (gfx/fxpage1), dragon 31 (toy2/dragon.bmp)
+// the game loads some object models with a page offset added to their textured polygons: beachball + speedup 27 (gfx/fxpage1), dragon 31 (toy2/dragon.bmp)
 pub fn page_offset(kind: i32) -> i16
 {
     match kind
@@ -94,7 +94,7 @@ pub fn page_offset(kind: i32) -> i16
     }
 }
 
-// the moving parts the exe draws besides the model (formats/README.md, Object motion) - dragon3 is the morph target of dragon2
+// the moving parts the game draws besides the model (formats/README.md, Object motion) - dragon3 is the morph target of dragon2
 pub fn parts(kind: i32, level: &str) -> Vec<String>
 {
     let models = |names: &[&str]| names.iter().map(|name| format!("models/{name}.m")).collect();
@@ -144,6 +144,8 @@ pub fn model(kind: i32, flags: &[i32; 4], level: &str) -> Option<String>
         39 => Some("levels/frontend/namestand.m".to_string()),
         40 => models(if level.starts_with("garden") { "spbasegarden" } else { "spbase" }),
         41 => models("sphose"),
+        // the object thrower: the model of what it throws (flag 1 = its type), the app code makes it when a car sets it off
+        42 if flags[1] != 42 => model(flags[1], &[0; 4], &level),
         43 => models("basketball"),
         44 => Some("levels/frontend/bigscreen.m".to_string()),
         45 => Some("levels/frontend/clockbody.m".to_string()),

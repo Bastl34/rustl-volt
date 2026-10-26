@@ -4,6 +4,7 @@
 use std::f32::consts::PI;
 
 use crate::assist::{self, DriveMode};
+use crate::battle::Battle;
 use crate::pad::Buttons;
 use rustl::prelude::*;
 use rustl::serde_json;
@@ -15,6 +16,19 @@ use crate::cars;
 use crate::field::{self, Opponent, Slot};
 use crate::random::Random;
 use crate::track::{find_node, AiPlace, Track};
+
+// the power up test scene of the converter (markar + extra pickups) and its cars
+pub const PLAYGROUND_SCENE: &str = "powerup_test";
+// the physics test of the converter: a grid floor with the physics objects of every level - driven alone like the stunt arena
+pub const PHYSICS_TEST_SCENE: &str = "physics_test";
+pub const PLAYGROUND_CARS: usize = 6;
+
+// Clockwork Carnage (game mode 3): 30 cars, all the Clockwork, the bots with the names of the game (bot n: name n - 1)
+pub const CLOCKWORK_CAR: &str = "wincar4";
+// own (user wish): the bots in the other clockwork cars at random - green, yellow, red (the game: all white)
+pub const CLOCKWORK_BOT_CARS: [&str; 3] = ["wincar", "wincar2", "wincar3"];
+pub const CLOCKWORK_CARS: usize = 30;
+const CLOCKWORK_NAMES: [&str; 30] = ["Zed", "Def Stef", "Doc C", "Gaztastic", "CT Baynes", "Fodge", "Eoin", "Roland", "Matt DC", "Tri Si", "Goombah", "Nutnut", "Bliz", "Rippance", "Shehad", "Jimlad", "Kev", "Big Mike", "New York Jez", "Traf", "J", "Eggy", "Big Rich", "Super Turk", "Pab", "Twan'Mobile", "Berb", "Gregm", "Fungus", "Liddon"];
 
 // the settings of the menu (Game Settings) - the defaults of the game: 3 laps, 8 cars, pickups on
 #[derive(Clone, Copy, Debug)]
@@ -33,13 +47,23 @@ pub struct RaceSettings
     pub kmh: bool,
     // Select Mode of the game: the driving aids of the player cars (split screen: Racer.mode per player)
     pub mode: DriveMode,
+    // battle tag in an arena: no laps, the star and the clocks (battle.rs)
+    pub battle: bool,
+    // Battle Settings: bots in a battle alone, one random star out (else all like the game), the star goes over by contact (else when close like the game)
+    pub battle_bots: usize,
+    pub one_star: bool,
+    pub contact: bool,
+    // the power up test (powerup_test.scene, own): no laps, the bots drive circles
+    pub playground: bool,
+    // Clockwork Carnage: every car the Clockwork, its own grid of 30
+    pub clockwork: bool,
 }
 
 impl Default for RaceSettings
 {
     fn default() -> Self
     {
-        Self { laps: 3, cars: field::CARS, difficulty: Difficulty::Hard, pickups: true, practice: false, trial: false, kmh: true, mode: DriveMode::Arcade }
+        Self { laps: 3, cars: field::CARS, difficulty: Difficulty::Hard, pickups: true, practice: false, trial: false, kmh: true, mode: DriveMode::Arcade, battle: false, battle_bots: 3, one_star: true, contact: true, playground: false, clockwork: false }
     }
 }
 // the HUD shows wrong way only after the state held this long (s)
@@ -54,9 +78,9 @@ const ARROW_RATE: f32 = 3.0;
 // the lap fraction wraps from below this to above 1 - this at the finish line
 const FINISH_LOW: f32 = 0.25;
 const FINISH_HIGH: f32 = 0.75;
-// 8 speed steps per TopEnd for the 7 speed dots (the exe uses the wheel speed)
+// 8 speed steps per TopEnd for the 7 speed dots (the game uses the wheel speed)
 const SPEED_STEPS: f32 = 8.0;
-// the countdown of the exe: 5 s, the numbers in the last 3, a beep (22050 Hz) at 3, 2, 1 below 3.5 s, at GO the beep at 31000 and 37000 Hz together
+// the countdown of the game: 5 s, the numbers in the last 3, a beep (22050 Hz) at 3, 2, 1 below 3.5 s, at GO the beep at 31000 and 37000 Hz together
 pub const COUNTDOWN: f64 = 5.0;
 const COUNTDOWN_BEEPS: f64 = 3.5;
 const BEEP_PITCH: f32 = 1.0;
@@ -74,6 +98,15 @@ const HOLD_SPEED: f32 = 1.0;
 // a bot that gets less than this many m further along the track in this many s is put back onto the line - generous, the reverse gets the first try
 const STALL_PROGRESS: f32 = 4.0;
 const STALL_TIME: f32 = 7.0;
+// the power up test: the bots steer this much, give this much throttle, turn round after this many s, go back to their slot after this long on the roof
+const CIRCLE_STEER: [f32; 2] = [0.45, 1.0];
+const CIRCLE_THROTTLE: [f32; 2] = [0.45, 0.8];
+const CIRCLE_TURN: [f32; 2] = [4.0, 9.0];
+const CIRCLE_ROOF: f32 = 2.0;
+// slower than this (m/s) for this long is stuck, then it backs out this long
+const CIRCLE_STUCK_SPEED: f32 = 0.5;
+const CIRCLE_STUCK: f32 = 1.5;
+const CIRCLE_BACK: f32 = 1.5;
 // m along the track after the last stall before a stall counts as the first again - the jump of the reset itself is no way out
 const STALL_CLEAR: f32 = 50.0;
 // game metres per metre of ours (the HUD of the game: 0.005 m per unit, ours 0.01)
@@ -136,7 +169,7 @@ pub struct Racer
     pub speed_steps: f32,
     // 1 = leading
     pub position: u32,
-    // the direction sign on screen (0..10, fxpage2) and its timer (640 -> 0, the exe fades it in above 512 and out below 128)
+    // the direction sign on screen (0..10, fxpage2) and its timer (640 -> 0, the game fades it in above 512 and out below 128)
     pub sign: Option<usize>,
     pub sign_timer: f32,
     sign_order: i32,
@@ -146,12 +179,22 @@ pub struct Racer
     // Junior RC: s the player car is lost (upside down, the wrong way, ...) - it is put back onto the track after a while
     lost_time: f32,
     stuck: assist::StuckWatch,
+    // Junior RC: the steer assist (steer, weight) as handed to the car - the weight eases in and out
+    assist: (f32, f32),
     stalls: usize,
     stall_score: f32,
     pub ahead: Option<Neighbour>,
     pub behind: Option<Neighbour>,
     // the driving aids of a local player
     pub mode: DriveMode,
+}
+
+// what the mode of a player changed on its car
+struct ModeRestore
+{
+    id: u32,
+    wall_slide: f32,
+    center_hits: bool,
 }
 
 // a viewport: racer index, camera id, viewport (x, y from the bottom left, width, height)
@@ -188,8 +231,12 @@ pub struct Race
     cell_cams: Vec<u32>,
     // the viewport of the player camera before
     split_restore: Option<[f32; 4]>,
-    // Simulation: the wall slide of a player car before it was turned off - back on Stop
-    wall_slides: Vec<(u32, f32)>,
+    // a player car before the settings of its mode - back on Stop
+    mode_restores: Vec<ModeRestore>,
+    // battle tag: the star, the clocks, where the bots go
+    pub battle: Option<Battle>,
+    // the power up test: per racer its circle (steer, throttle, s until it turns round, s on its roof, s stuck, s backing out)
+    circles: Vec<[f32; 6]>,
 }
 
 impl Racer
@@ -214,7 +261,7 @@ impl Racer
             wrong_way_flag: false, wrong_way_timer: 0.0, ai: None,
             laps: 0, lap_start: 0.0, last_lap: None, best_lap: None, finish_time: None, wrong_way: false, arrow: 0.0,
             speed: 0.0, speed_steps: 0.0, position: 1, sign: None, sign_timer: 0.0, sign_order: 0, ahead: None, behind: None,
-            best_score: f32::MIN, stall_time: 0.0, lost_time: 0.0, stuck: assist::StuckWatch::default(), stalls: 0, stall_score: f32::MIN,
+            best_score: f32::MIN, stall_time: 0.0, lost_time: 0.0, stuck: assist::StuckWatch::default(), assist: (0.0, 0.0), stalls: 0, stall_score: f32::MIN,
             mode: DriveMode::default(),
         }
     }
@@ -259,16 +306,22 @@ impl Racer
 
 impl Race
 {
-    // a level scene with track data and a start car - None otherwise (showroom, battle levels)
+    // a level scene with track data and a start car - None otherwise (showroom, battle levels outside of battle tag)
     // the player drives the start car, or the cars of the menu (the start car then only brings the grid) - several of them in split screen
     pub fn start(scene: &Scene, players: Vec<NodeItem>, settings: RaceSettings) -> Option<Self>
     {
-        let track = Track::from_scene(scene)?;
+        let track = match Track::from_scene(scene)
+        {
+            Some(track) => track,
+            None if settings.battle || settings.playground => Track::arena(),
+            None => return None,
+        };
         let start_car = find_node(&scene.nodes, &|node| node.tags.contains("revolt_start_car"))?;
-        let grid = field::grid(&start_car.read().unwrap());
+        let grid = field::grid_of(&start_car.read().unwrap(), settings.clockwork);
+        let battle = settings.battle.then(|| Battle::new(scene, &grid.iter().map(|slot| slot.floor).collect::<Vec<_>>(), settings.one_star, settings.contact));
         let players = if players.is_empty() { vec![start_car] } else { players };
         if grid.is_empty() { console_warning!("race: no start grid on the start car - re-convert the level for opponents"); }
-        if !track.has_ai() { console_warning!("race: no AI nodes - re-convert the level for opponents"); }
+        if !track.has_ai() && battle.is_none() && !settings.playground { console_warning!("race: no AI nodes - re-convert the level for opponents"); }
 
         console_log!("race: {} zones, {} position nodes, {} AI nodes, lap {:.0} m, {} laps", track.zones.len(), track.nodes.len(), track.ai.len(), track.length, settings.laps);
         let start = track.start;
@@ -282,7 +335,8 @@ impl Race
             track,
             ready: false,
             random: Random::default(),
-            countdown: COUNTDOWN,
+            // the power up test drives off at once
+            countdown: if settings.playground { 0.0 } else { COUNTDOWN },
             race_time: 0.0,
             finish_wait: 0.0,
             over: false,
@@ -293,13 +347,20 @@ impl Race
             empty_cells: vec![],
             cell_cams: vec![],
             split_restore: None,
-            wall_slides: vec![],
+            mode_restores: vec![],
+            battle,
+            circles: vec![],
         })
     }
 
     pub fn scene_id(&self) -> u32
     {
         self.scene_id
+    }
+
+    pub fn track(&self) -> &Track
+    {
+        &self.track
     }
 
     // the first local racer - the one the HUD shows
@@ -501,7 +562,7 @@ impl Race
     // opponents are possible: more cars than players, a grid and the AI nodes
     pub fn wants_opponents(&self) -> bool
     {
-        !self.ready && self.settings.cars > self.racers.len() && !self.grid.is_empty() && self.track.has_ai()
+        !self.ready && self.settings.cars > self.racers.len() && !self.grid.is_empty() && (self.track.has_ai() || self.battle.is_some() || self.settings.playground)
     }
 
     pub fn ready(&self) -> bool
@@ -522,7 +583,9 @@ impl Race
         for (index, opponent) in opponents.into_iter().enumerate()
         {
             let bot = Bot::new(&mut self.random, self.settings.difficulty);
-            self.racers.push(Racer::new(opponent.node, Driver::Bot(bot), Some(index), start));
+            let mut racer = Racer::new(opponent.node, Driver::Bot(bot), Some(index), start);
+            if self.settings.clockwork { racer.name = CLOCKWORK_NAMES[index % CLOCKWORK_NAMES.len()].to_string(); }
+            self.racers.push(racer);
         }
         let mut slot = bots;
         for racer in self.racers.iter_mut().filter(|racer| racer.is_local())
@@ -530,6 +593,7 @@ impl Race
             racer.slot = (slot < self.grid.len()).then_some(slot);
             slot += 1;
         }
+        if let Some(battle) = self.battle.as_mut() { battle.resize(self.racers.len()); }
         self.ready = true;
     }
 
@@ -545,6 +609,7 @@ impl Race
                 racer.slot = (slot < grid).then_some(slot);
             }
         }
+        if let Some(battle) = self.battle.as_mut() { battle.resize(self.racers.len()); }
         self.ready = true;
     }
 
@@ -606,12 +671,18 @@ impl Race
             self.race_time += dt as f64;
         }
 
+        // battle and the power up test: no laps, no stalls
+        let battle = self.battle.is_some() || self.settings.playground;
         for index in 0..self.racers.len()
         {
-            self.update_racer(scene, index, running, dt);
+            match battle
+            {
+                true => self.update_speed(scene, index),
+                false => self.update_racer(scene, index, running, dt),
+            }
             // the race is over: every car brakes to a stop and stays there
             let mut action = if running && !self.over { self.control(scene, index, locals, dt) } else { None };
-            if running && !self.over && !matches!(action, Some(BotAction::Reset { .. }))
+            if !battle && running && !self.over && !matches!(action, Some(BotAction::Reset { .. }))
             {
                 action = self.check_stall(index, dt).or(action);
             }
@@ -633,6 +704,10 @@ impl Race
             }
         }
 
+        if let Some(battle) = self.battle.as_mut()
+        {
+            battle.update(scene, &mut self.racers, running && !self.over, self.race_time, dt);
+        }
         self.update_positions();
         self.update_end(dt);
         beeps
@@ -651,8 +726,33 @@ impl Race
     }
 
     // a local player drives with the bindings (Backspace puts the car back onto the track), a bot by the racing line
+    // battle tag: Backspace puts the car back onto its grid slot, a bot drives where the battle sends it
     fn control(&mut self, scene: &Scene, index: usize, locals: &[Buttons], dt: f32) -> Option<BotAction>
     {
+        if self.settings.playground
+        {
+            return self.circle(scene, index, locals, dt);
+        }
+        if self.battle.is_some()
+        {
+            let view = view(scene, &self.racers[index]);
+            let racer = &mut self.racers[index];
+            if racer.finished() { return None; }
+            return match &mut racer.driver
+            {
+                Driver::Local(player) =>
+                {
+                    if !locals.get(*player as usize).is_some_and(|pad| pad.reset) { return None; }
+                    let slot = racer.slot.and_then(|slot| self.grid.get(slot)).copied()?;
+                    Some(BotAction::Reset { position: slot.floor, heading: slot.heading, reason: "by the player" })
+                },
+                Driver::Bot(bot) =>
+                {
+                    let target = self.battle.as_mut()?.target(index, dt)?;
+                    view.map(|view| bot.drive_to(&view, target, dt))
+                },
+            };
+        }
         let catch_up = self.catch_up(index);
         let view = view(scene, &self.racers[index]).map(|view| BotView { catch_up, ..view });
         let track = &self.track;
@@ -669,6 +769,43 @@ impl Race
             Driver::Bot(_) if finished => None,
             Driver::Bot(bot) => view.map(|view| bot.drive(track, &view, dt)),
         }
+    }
+
+    // the power up test: Backspace puts a player back onto its grid slot; a bot drives a circle, turns round now and then, and goes back to its slot when on its roof
+    fn circle(&mut self, scene: &Scene, index: usize, locals: &[Buttons], dt: f32) -> Option<BotAction>
+    {
+        let view = view(scene, &self.racers[index]);
+        let slot = self.racers[index].slot.and_then(|slot| self.grid.get(slot)).copied();
+        if let Driver::Local(player) = self.racers[index].driver
+        {
+            if !locals.get(player as usize).is_some_and(|pad| pad.reset) { return None; }
+            return slot.map(|slot| BotAction::Reset { position: slot.floor, heading: slot.heading, reason: "by the player" });
+        }
+        if self.circles.len() < self.racers.len() { self.circles.resize(self.racers.len(), [0.0; 6]); }
+        let random = &mut self.random;
+        let circle = &mut self.circles[index];
+        circle[2] -= dt;
+        if circle[2] <= 0.0
+        {
+            let side = if circle[0] == 0.0 { if random.next() < 0.5 { 1.0 } else { -1.0 } } else { -circle[0].signum() };
+            *circle = [side * (CIRCLE_STEER[0] + (CIRCLE_STEER[1] - CIRCLE_STEER[0]) * random.next()), CIRCLE_THROTTLE[0] + (CIRCLE_THROTTLE[1] - CIRCLE_THROTTLE[0]) * random.next(), CIRCLE_TURN[0] + (CIRCLE_TURN[1] - CIRCLE_TURN[0]) * random.next(), circle[3], circle[4], circle[5]];
+        }
+        let view = view?;
+        circle[3] = if view.up.y < 0.3 { circle[3] + dt } else { 0.0 };
+        if circle[3] > CIRCLE_ROOF
+        {
+            circle[3] = 0.0;
+            return slot.map(|slot| BotAction::Reset { position: slot.floor, heading: slot.heading, reason: "on its roof" });
+        }
+        // against a wall: back out with the other lock (the brake reverses at a standstill)
+        circle[4] = if view.speed.abs() < CIRCLE_STUCK_SPEED && circle[5] <= 0.0 { circle[4] + dt } else { 0.0 };
+        if circle[4] > CIRCLE_STUCK { circle[4] = 0.0; circle[5] = CIRCLE_BACK; }
+        if circle[5] > 0.0
+        {
+            circle[5] -= dt;
+            return Some(BotAction::Drive(VehicleDriveInput { brake: 1.0, steer: -circle[0], ..Default::default() }));
+        }
+        Some(BotAction::Drive(VehicleDriveInput { throttle: circle[1], steer: circle[0], ..Default::default() }))
     }
 
     // Junior RC: a bot ahead of the best Junior RC player that still races slows down by its lead - the player can catch up
@@ -796,9 +933,30 @@ impl Race
         }
     }
 
+    // battle tag: only the speed of a car counts (no track)
+    fn update_speed(&mut self, scene: &Scene, index: usize)
+    {
+        let racer = &mut self.racers[index];
+        racer.speed = vehicle(scene, racer.id).map_or(0.0, |vehicle| vehicle.telemetry().speed_kmh.abs() / 3.6);
+        racer.speed_steps = racer.speed / racer.top_speed.max(0.1) * SPEED_STEPS;
+    }
+
     // finished cars by their time, the others by their progress; ahead / behind for the HUD
+    // battle tag: the winner, then by the clock left - nobody ahead or behind
     fn update_positions(&mut self)
     {
+        if let Some(battle) = &self.battle
+        {
+            let order = battle.order(&self.racers);
+            for (place, &index) in order.iter().enumerate()
+            {
+                let racer = &mut self.racers[index];
+                racer.position = place as u32 + 1;
+                racer.ahead = None;
+                racer.behind = None;
+            }
+            return;
+        }
         let length = self.track.length;
         let mut order: Vec<usize> = (0..self.racers.len()).collect();
         order.sort_by(|&a, &b|
@@ -833,6 +991,16 @@ impl Race
     fn update_end(&mut self, dt: f32)
     {
         if self.over { return; }
+        // battle tag: over with the first clock at 0
+        if self.battle.is_some()
+        {
+            if self.racers.iter().any(Racer::finished)
+            {
+                self.over = true;
+                console_log!("battle: over - Enter for the menu");
+            }
+            return;
+        }
         let locals_done = self.racers.iter().filter(|racer| racer.is_local()).all(Racer::finished);
         if !locals_done { return; }
         self.finish_wait += dt;
@@ -851,10 +1019,11 @@ impl Race
         {
             racer.restart(start, &mut self.random, self.settings.difficulty);
         }
-        self.countdown = COUNTDOWN;
+        self.countdown = if self.settings.playground { 0.0 } else { COUNTDOWN };
         self.race_time = 0.0;
         self.finish_wait = 0.0;
         self.over = false;
+        if let Some(battle) = self.battle.as_mut() { battle.restart(); }
         console_log!("race: restart");
     }
 
@@ -864,24 +1033,26 @@ impl Race
         let racer = &self.racers[index];
         let mode = racer.mode;
         let id = racer.id;
-        if !mode.wall_slide() && !self.wall_slides.iter().any(|(car, _)| *car == id)
+        // Simulation: no wall slide, car hits spin
+        if !mode.wall_slide() && !self.mode_restores.iter().any(|restore| restore.id == id)
         {
-            if let Some(before) = with_vehicle(scene, id, |vehicle, _| std::mem::replace(&mut vehicle.chassis.wall_slide, 0.0))
+            let restore = with_vehicle(scene, id, |vehicle, _|
             {
-                self.wall_slides.push((id, before));
-            }
+                let restore = ModeRestore { id, wall_slide: vehicle.chassis.wall_slide, center_hits: vehicle.chassis.center_hits };
+                vehicle.chassis.wall_slide = 0.0;
+                vehicle.chassis.center_hits = false;
+                restore
+            });
+            self.mode_restores.extend(restore);
         }
 
-        let steer = if active && mode == DriveMode::JuniorRc
-        {
-            let transform = racer.node.read().unwrap().get_full_transform();
-            let forward = -transform.column(2).xyz().normalize();
-            let right = transform.column(0).xyz().normalize();
-            let speed = vehicle(scene, id).map_or(0.0, |vehicle| vehicle.telemetry().speed_kmh / 3.6);
-            assist::steer_back(&self.track, racer.ai, transform.column(3).xyz(), forward, right, speed)
-        }
-        else { None };
-        with_vehicle(scene, id, |vehicle, _| vehicle.steer_assist = steer);
+        let target = if active && mode == DriveMode::JuniorRc { view(scene, racer).and_then(|view| assist::steer_back(&self.track, racer.ai, &view)) } else { None };
+        let racer = &mut self.racers[index];
+        let (steer, weight) = target.unwrap_or((racer.assist.0, 0.0));
+        let step = assist::BLEND_RATE * dt;
+        racer.assist = (steer, racer.assist.1 + (weight - racer.assist.1).clamp(-step, step));
+        let assist = Some(racer.assist).filter(|(_, weight)| *weight > 0.0);
+        with_vehicle(scene, id, |vehicle, _| vehicle.steer_assist = assist);
         if active { assist::stabilize(scene, id, mode, dt); }
 
         // Junior RC: lost for a while - back onto the racing line ahead
@@ -911,9 +1082,10 @@ impl Race
     // Play stops - every car drives with its bindings again, the camera back on the player car (the editor saves its controller)
     pub fn stop(&mut self, scene: &mut Scene)
     {
-        for (id, wall_slide) in self.wall_slides.drain(..)
+        if let Some(battle) = &self.battle { battle.stop(scene); }
+        for restore in self.mode_restores.drain(..)
         {
-            with_vehicle(scene, id, |vehicle, _| vehicle.chassis.wall_slide = wall_slide);
+            with_vehicle(scene, restore.id, |vehicle, _| { vehicle.chassis.wall_slide = restore.wall_slide; vehicle.chassis.center_hits = restore.center_hits; });
         }
         for racer in &self.racers
         {
@@ -1006,7 +1178,7 @@ fn update_progress(track: &Track, racer: &mut Racer, position: Vector3<f32>, for
     let new = (old + step).rem_euclid(1.0);
     racer.fraction = new;
 
-    // the angle between the heading and the track direction, turned at most ARROW_RATE (the exe: a spline through the nodes)
+    // the angle between the heading and the track direction, turned at most ARROW_RATE (the game: a spline through the nodes)
     let direction = track.direction(racer.pan_node, position);
     let target = direction.dot(&right).atan2(direction.dot(&forward));
     let mut turn = target - racer.arrow;

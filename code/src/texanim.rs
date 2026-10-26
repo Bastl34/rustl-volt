@@ -1,6 +1,6 @@
 // the texture animations of the levels (.w TexAnim: the escalator steps of muse2, screens, water, ...) as an offset of the base texture
 // the converter writes the frames onto the material (revolt_texanim_data, the primitive nodes get the material extras), the mesh has the uvs of frame 0
-// a frame that moves the uvs is played as their shift (centre of its corners minus the one of frame 0) - frames on another texture page are left out
+// a frame that moves the uvs is played as their shift (centre of its first 3 corners minus the one of frame 0) - frames on another texture page are left out
 
 use rustl::prelude::*;
 use rustl::serde_json::{self, Value};
@@ -97,11 +97,13 @@ fn frames(json: &str) -> Option<Vec<(Vector2<f32>, f32)>>
 {
     let data: Value = serde_json::from_str(json).ok()?;
     let list = data.as_array()?;
+    // the first 3 corners - a triangle leaves the 4th unused (0 or junk)
     let centre = |frame: &Value| -> Option<Vector2<f32>>
     {
         let uvs = frame["uvs"].as_array()?;
-        let sum = uvs.iter().fold(Vector2::zeros(), |sum, uv| sum + Vector2::new(uv[0].as_f64().unwrap_or(0.0) as f32, uv[1].as_f64().unwrap_or(0.0) as f32));
-        Some(sum / uvs.len().max(1) as f32)
+        let used = &uvs[..uvs.len().min(3)];
+        let sum = used.iter().fold(Vector2::zeros(), |sum, uv| sum + Vector2::new(uv[0].as_f64().unwrap_or(0.0) as f32, uv[1].as_f64().unwrap_or(0.0) as f32));
+        Some(sum / used.len().max(1) as f32)
     };
     let first = list.first()?;
     let (page, origin) = (first["texture"].as_i64(), centre(first)?);

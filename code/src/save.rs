@@ -46,6 +46,7 @@ pub struct SaveData
 pub struct Multi
 {
     pub trial: bool,
+    pub battle: bool,
     pub players: usize,
     // the first version had only on / off - read when the count is missing
     pub bots: bool,
@@ -80,6 +81,13 @@ pub struct Settings
     pub kmh: bool,
     #[serde(default)]
     pub mode: String,
+    // Battle Settings - older saves have none
+    #[serde(default)]
+    pub battle_bots: Option<usize>,
+    #[serde(default)]
+    pub one_star: Option<bool>,
+    #[serde(default)]
+    pub contact: Option<bool>,
 }
 
 fn yes() -> bool { true }
@@ -157,6 +165,9 @@ impl SaveData
             settings.laps = saved.laps.clamp(1, 20);
             settings.pickups = saved.pickups;
             settings.kmh = saved.kmh;
+            if let Some(bots) = saved.battle_bots { settings.battle_bots = bots.min(11); }
+            if let Some(one) = saved.one_star { settings.one_star = one; }
+            if let Some(contact) = saved.contact { settings.contact = contact; }
             if let Some(mode) = DriveMode::ALL.iter().find(|m| m.label() == saved.mode) { settings.mode = *mode; }
             if let Some(difficulty) = Difficulty::ALL.iter().find(|d| d.label() == saved.difficulty) { settings.difficulty = *difficulty; }
         }
@@ -165,7 +176,7 @@ impl SaveData
 
     pub fn set_race_settings(&mut self, settings: &RaceSettings)
     {
-        self.settings = Some(Settings { cars: settings.cars, laps: settings.laps, difficulty: settings.difficulty.label().to_string(), pickups: settings.pickups, kmh: settings.kmh, mode: settings.mode.label().to_string() });
+        self.settings = Some(Settings { cars: settings.cars, laps: settings.laps, difficulty: settings.difficulty.label().to_string(), pickups: settings.pickups, kmh: settings.kmh, mode: settings.mode.label().to_string(), battle_bots: Some(settings.battle_bots), one_star: Some(settings.one_star), contact: Some(settings.contact) });
     }
 
     pub fn audio_settings(&self) -> AudioSettings
@@ -184,6 +195,7 @@ impl SaveData
         let mut setup = MultiSetup::default();
         let Some(saved) = &self.multi else { return setup; };
         setup.trial = saved.trial;
+        setup.battle = saved.battle && !saved.trial;
         setup.players = saved.players.clamp(2, MAX_PLAYERS);
         setup.opponents = saved.opponents.unwrap_or(if saved.bots { setup.opponents } else { 0 }).min(12 - setup.players);
         if let Some(difficulty) = Difficulty::ALL.iter().find(|d| d.label() == saved.difficulty) { setup.difficulty = *difficulty; }
@@ -203,7 +215,7 @@ impl SaveData
     pub fn set_multi_setup(&mut self, setup: &MultiSetup)
     {
         let slots = setup.slots.iter().map(|slot| MultiSlot { name: slot.name.clone(), device: slot.device.map(Device::key).unwrap_or_default(), car: slot.car, mode: slot.mode.label().to_string() }).collect();
-        self.multi = Some(Multi { trial: setup.trial, players: setup.players, bots: setup.opponents > 0, opponents: Some(setup.opponents), difficulty: setup.difficulty.label().to_string(), slots });
+        self.multi = Some(Multi { trial: setup.trial, battle: setup.battle, players: setup.players, bots: setup.opponents > 0, opponents: Some(setup.opponents), difficulty: setup.difficulty.label().to_string(), slots });
     }
 
     pub fn video_settings(&self) -> VideoSettings

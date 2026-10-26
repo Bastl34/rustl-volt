@@ -86,4 +86,9 @@ impl ObjectType
     {
         matches!(self, ObjectType::Water | ObjectType::Stream | ObjectType::WaterRipples)
     }
+
+    pub fn is_ball(&self) -> bool
+    {
+        matches!(self, ObjectType::Beachball | ObjectType::Football | ObjectType::BasketBall)
+    }
 }

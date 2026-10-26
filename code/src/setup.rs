@@ -28,6 +28,14 @@ const LOG_FILE: &str = "convert.log";
 const DOWNLOAD_LOG_FILE: &str = "download.log";
 // the key help below the text of the screens with buttons
 const KEYS_HINT: &str = "Arrows: select    Enter: OK    Backspace: quit";
+// the screen before the download of re-volt.io - 4 lines and the note fit above the buttons
+const DISCLAIMER: [&str; 4] = [
+    "The files are downloaded from re-volt.io, a site of the Re-Volt community.",
+    "Rustl-Volt only offers that download - it does not host, own or share them",
+    "and is not affiliated with re-volt.io or the rights holders of Re-Volt.",
+    "It is not responsible for the contents of the files or their distribution.",
+];
+const DISCLAIMER_NOTE: &str = "You download and use them at your own risk and responsibility.";
 // a longer error line ends with ... on the screen
 const MESSAGE_CHARS: usize = 90;
 
@@ -59,6 +67,9 @@ enum Phase
     // nothing converted yet and no folder of an earlier run: the Steam files or the download of re-volt.io
     #[cfg(not(target_arch = "wasm32"))]
     Choose(Choice),
+    // before the download of re-volt.io: the files are third party, at the user's own risk - agree or back
+    #[cfg(not(target_arch = "wasm32"))]
+    Disclaimer,
     // re-volt.io: the packs into revolt_io next to the converted files - the conversion follows
     #[cfg(not(target_arch = "wasm32"))]
     Downloading(Conversion),
@@ -77,6 +88,8 @@ enum Action
 {
     Steam,
     Download,
+    // the disclaimer of the download was accepted
+    Agree,
     Pick,
     Retry,
     // to the choice of the files
@@ -183,8 +196,16 @@ impl Setup
                         self.go(Phase::NotFound(String::new()));
                     },
                 },
-                Some(Action::Download) => self.download(),
+                Some(Action::Download) => self.go(Phase::Disclaimer),
                 Some(Action::Quit) => quit(state),
+                _ => {},
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            Phase::Disclaimer => match action
+            {
+                Some(Action::Agree) => self.download(),
+                // Backspace goes back here, not out of the game
+                Some(Action::Back | Action::Quit) => self.choose(),
                 _ => {},
             },
             Phase::NotFound(_) =>
@@ -249,7 +270,7 @@ impl Setup
         }
     }
 
-    // next to the converted files (the folder of the exe, user data only if that is read only) - None before check
+    // next to the converted files (the folder of the game, user data only if that is read only) - None before check
     #[cfg(not(target_arch = "wasm32"))]
     fn download_dir(&self) -> Option<PathBuf>
     {
@@ -583,7 +604,9 @@ impl Setup
         match &self.phase
         {
             #[cfg(not(target_arch = "wasm32"))]
-            Phase::Choose(_) => vec![("Download from re-volt.io", Action::Download), ("Steam files", Action::Steam), ("Quit", Action::Quit)],
+            Phase::Choose(_) => vec![("Steam files", Action::Steam), ("Download from re-volt.io", Action::Download), ("Quit", Action::Quit)],
+            #[cfg(not(target_arch = "wasm32"))]
+            Phase::Disclaimer => vec![("I agree, download", Action::Agree), ("Back", Action::Back)],
             Phase::NotFound(_) => vec![("Choose folder...", Action::Pick), ("Back", Action::Back), ("Quit", Action::Quit)],
             Phase::Failed(_) => vec![("Try again", Action::Retry), ("Choose folder...", Action::Pick), ("Back", Action::Back), ("Quit", Action::Quit)],
             _ => vec![],
@@ -610,8 +633,14 @@ impl Setup
                     0 => "re-volt.io: downloaded already.".to_string(),
                     megabytes => format!("re-volt.io: downloads the files of the Re-Volt community ({megabytes} MB)."),
                 };
-                let lines = vec!["Rustl-Volt plays with the files of the original Re-Volt.".to_string(), download, steam, KEYS_HINT.to_string()];
+                let lines = vec!["Rustl-Volt plays with the files of the original Re-Volt.".to_string(), steam, download, KEYS_HINT.to_string()];
                 ("Re-Volt files".to_string(), lines, None, None)
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            Phase::Disclaimer =>
+            {
+                let lines = DISCLAIMER.iter().map(|line| line.to_string()).collect();
+                ("Before the download".to_string(), lines, Some(DISCLAIMER_NOTE.to_string()), None)
             },
             #[cfg(not(target_arch = "wasm32"))]
             Phase::Downloading(download) =>

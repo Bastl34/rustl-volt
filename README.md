@@ -61,6 +61,8 @@ This repository contains no files of the original game, except the font (see bel
 - **re-volt.io**: the packs of [re-volt.io](https://re-volt.io/downloads/misc), which the game downloads from there only when you choose it. The car box pictures of that download come from the asset pack of RVGL ([rvgl.org](https://rvgl.org)).
 - **Steam**: the files of a copy you own ([store page](https://store.steampowered.com/app/287310/ReVolt/)).
 
+Rustl-Volt only offers the download from re-volt.io as an option; it does not host, own or distribute these files and is not affiliated with re-volt.io. It is not responsible for their contents or their distribution. Before the download the game asks you to agree to this: you download and use the files at your own risk and responsibility.
+
 The font of the game (`ui/font.png`, made by `ui/make_font.py` from `gfx/font.bmo` of RVGL's asset pack) is RVGL's reworked version of the original Re-Volt font, licensed by the RVGL team under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) ([ui/LICENSE.RVGL-font.txt](ui/LICENSE.RVGL-font.txt)). Only its letters, digits and signs are used, unchanged except that they are white with the brightness as alpha.
 
 The screenshots show the game converted from such a copy. They are only here to show the project. If you own rights to Re-Volt and want anything removed, please open an issue and it will be taken down.

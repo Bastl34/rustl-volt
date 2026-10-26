@@ -330,7 +330,7 @@ impl Championship
 }
 
 
-// the table of the cup over the race, like the exe: Car, one column per race so far, Pnts - the messages above it
+// the table of the cup over the race, like the game: Car, one column per race so far, Pnts - the messages above it
 pub struct CupScreen
 {
     assets: String,

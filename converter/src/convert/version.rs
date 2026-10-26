@@ -23,7 +23,26 @@ use super::{Log, Settings};
 // 12: car aerials in own `_solid` materials without alpha mask (the mite aerial was cut away by the color key)
 // 13: gfx/font.png is the font of the project (ui/font.png: RVGL's font.bmo, 512 x 512) - the font.bmp of the re-volt.io download had its glyphs a texel higher
 // 14: level big cubes merged into 80 m cells (muse2 460 -> ~120 primitives), car hull spheres as JSON (revolt_spheres) instead of empty nodes
-pub const ASSET_VERSION: u32 = 14;
+// 15: car aerials in 4 pieces on joints (aerial_joint_N, the app bends them), engine sounds like the game (wincar4 clockwork, class 1 and 2 petrol), .inf numbers with commas (bot_bat STARTPOS: start car)
+// 16: models/lightning.glb (the arc of battle tag, the green strip of fxpage1), lightning_blue.glb (electro pulse)
+// 17: again for 16 - converted with 16 before the green strip was in, lightning.glb was still the opaque blue-white beam
+// 18: models/water_balloon.glb (wbomb.m) for the weapons
+// 19: models/ball_bearing.glb (ball.m in gray), models/shock_sprite.glb (the blue web of fxpage1)
+// 20: models/fxpage1.png (the skins of turbo, zap and bomb)
+// 21: the start grid of Clockwork Carnage (revolt_grid "clockwork", 30 slots of the game)
+// 22: the grid floor of cars.scene (assets/cars/showroom_floor.glb)
+// 23: models/sparks.png (fxpage1 with black see through) for the particles
+// 24: models/sparks.png with the sprite tiles faded out round
+// 25: object throwers: the model of the thrown object (revolt_thrown_source), the thrower triggers (revolt_track_throws)
+// 26: lighter ABC blocks (mass 0.25 instead of the game's 0.8)
+// 27: ABC blocks lighter again (mass 0.08)
+// 28: physics_test.scene (the markar arena + objects of the other levels)
+// 29: physics_test.scene on the showroom floor, only the start car
+// 30: the balls (sphere bodies) without the tilt of the .fob
+// 31: the balls keep their .fob tilt again (the floating was the ground plane recovery, engine fix)
+// 32: the .lit baked into every level (not only the frontend) without the square shadows (type 4) and not into pickups / stars, the runtime lights as revolt_lights
+// 33: levels without REDBOOK (Market Arena) get the music range 4 9 of the supermarket tracks
+pub const ASSET_VERSION: u32 = 33;
 pub const FILE: &str = "convert.json";
 const FORMAT: u32 = 1;
 

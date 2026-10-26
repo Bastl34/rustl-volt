@@ -21,7 +21,7 @@ pub const MASS_UNIT: f32 = 10.0;
 
 pub struct Body
 {
-    // re-volt units, about kg - from the object inits of the exe, the trolley from its Parameters.txt
+    // re-volt units, about kg - from the object inits of the game, the trolley from its Parameters.txt
     pub mass: f32,
     pub friction: f32,
     pub restitution: f32,
@@ -30,7 +30,7 @@ pub struct Body
     pub wait_for_hit: bool,
 }
 
-// the types the original moves when hit - mass from the exe, friction and restitution guessed
+// the types the original moves when hit - mass from the game, friction and restitution guessed
 pub fn body(kind: i32) -> Option<Body>
 {
     let body = |mass, friction, restitution, sphere| Some(Body { mass, friction, restitution, sphere, wait_for_hit: false });
@@ -41,7 +41,7 @@ pub fn body(kind: i32) -> Option<Body>
         // placed up to 45 units above the floor - it drops at the start like in the original
         TROLLEY => body(4.6, 0.1, 0.0, false),
         15 => body(0.2, 0.6, 0.6, true),
-        // the wobbly cones on the table of the menu: mass 0.5 like the exe, the clockwork cars knock them over
+        // the wobbly cones on the table of the menu: mass 0.5 like the game, the clockwork cars knock them over
         36 => body(0.5, 0.6, 0.1, false),
         43 => body(0.3, 0.6, 0.7, true),
         // moved by code in the game (wind, not decoded) - here a very light ball the cars push (user wish)
@@ -50,7 +50,8 @@ pub fn body(kind: i32) -> Option<Body>
         58 => body(1.5, 0.5, 0.1, false),
         59 => body(1.6, 0.6, 0.1, false),
         66 => body(1.6, 0.6, 0.0, false),
-        67 => body(0.8, 0.6, 0.1, false),
+        // the ABC blocks of toylite: 0.8 in the game - they stopped the cars like walls (user), a tenth of it
+        67 => body(0.08, 0.6, 0.1, false),
         _ => None,
     }
 }

@@ -15,6 +15,7 @@ pub mod mirror;
 pub mod motion;
 pub mod music;
 pub mod objects;
+pub mod playground;
 pub mod scene;
 pub mod skybox;
 pub mod sounds;
@@ -214,6 +215,12 @@ pub fn run(settings: Settings, levels: Vec<String>, cars: Vec<String>, log: Log)
         {
             log.error(format!("cars.scene: {err:#}"));
         }
+    }
+
+    if converted_levels.iter().any(|level| level.eq_ignore_ascii_case(playground::LEVEL)) && !converted.is_empty()
+    {
+        log.step("Physics test (physics_test.scene: the showroom floor, the start car of markar, the physics objects of the levels)");
+        playground::write_tests(&settings, &converted_levels, &log);
     }
 
     log.step(format!("Asset version (--> assets/{})", version::FILE));

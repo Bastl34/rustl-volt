@@ -1,4 +1,4 @@
-// .taz zones, .pan position nodes, .fan AI nodes, .tri track direction signs -> JSON strings in the extras of the level object (meters, glTF coordinates)
+// .taz zones, .pan position nodes, .fan AI nodes, .tri track direction signs and thrower triggers -> JSON strings in the extras of the level object (meters, glTF coordinates)
 // the race logic of the app code reads them - formats/README.md, Race progress
 
 use std::path::Path;
@@ -34,8 +34,26 @@ pub fn extras(dir: &Path, level: &str, scale: f32, mirrored: bool, log: &Log) ->
     put("revolt_track_path", "pan", &|path| track_path(path, scale, mirrored, log));
     put("revolt_ai_nodes", "fan", &|path| ai_nodes(path, scale, mirrored, log));
     put("revolt_track_signs", "tri", &|path| signs(path, scale, mirrored, log));
+    put("revolt_track_throws", "tri", &|path| throws(path, scale, mirrored, log));
 
     extras
+}
+
+// the object thrower triggers (type 6): the ID of the thrower and the box
+fn throws(path: &Path, scale: f32, mirrored: bool, log: &Log) -> Result<Option<Value>>
+{
+    let mut triggers = tri::load(path)?;
+    if mirrored { mirror::triggers(&mut triggers); }
+    let throws: Vec<Value> = triggers.iter().filter(|t| t.kind == tri::TRIGGER_THROW).map(|t| json!(
+    {
+        "id": t.flag,
+        "center": position(t.center, scale),
+        "axes": t.axes.map(|axis| round(to_gltf(axis), 1.0, 1e6)),
+        "half_size": round(t.half_size, scale, 1e4),
+    })).collect();
+    if throws.is_empty() { return Ok(None); }
+    log.info(format!("  {} object thrower triggers", throws.len()));
+    Ok(Some(json!(throws)))
 }
 
 fn zones(path: &Path, scale: f32, mirrored: bool, log: &Log) -> Result<Option<Value>>

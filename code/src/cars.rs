@@ -1,10 +1,13 @@
 // cars.scene of the converter: Enter / Backspace switch the driven car, the other cars are rigid bodies to ram
 // the editor keeps the scene after Play - everything changed here is put back in stop()
 
+use std::collections::{HashMap, HashSet};
+
 use rustl::prelude::*;
 use rustl::helper::option_or_id::OptionOrId;
+use rustl::rapier3d::prelude::Vector;
 use rustl::serde_json;
-use rustl::nalgebra::{Matrix4, UnitQuaternion};
+use rustl::nalgebra::{Matrix4, Unit, UnitQuaternion};
 use rustl::state::scene::components::transformation::TransformationData;
 use rustl::state::scene::node::{NodeSettings, PhysicsBodyType, PhysicsSettings, PhysicsShape};
 use rustl::state::scene::scene_controller::scene_controller::SceneController;
@@ -129,6 +132,14 @@ impl Showroom
         self.scene_id
     }
 
+    // the name of the car driven (Parameters.txt), None before the first one
+    pub fn current_name(&self) -> Option<String>
+    {
+        let car = &self.cars[self.current?];
+        let node = car.node.read().unwrap();
+        Some(node.extras.get::<String>("revolt_name").cloned().unwrap_or_else(|| car.name.clone()))
+    }
+
     // step: 1 the next car, -1 the one before
     pub fn update(&mut self, scene: &mut Scene, step: i32)
     {
@@ -158,7 +169,13 @@ impl Showroom
 
         if let (Some((data, controller, node)), Some(cam)) = (self.camera.take(), scene.get_game_camera_mut(""))
         {
-            if let Ok(data) = serde_json::from_value(data) { cam.get_data_mut().set(data); }
+            // the resolution stays the one of now - saved right after loading (the menu) it was still 0
+            if let Ok(mut data) = serde_json::from_value::<rustl::state::scene::camera::CameraData>(data)
+            {
+                let current = cam.get_data();
+                (data.resolution_width, data.resolution_height) = (current.resolution_width, current.resolution_height);
+                cam.get_data_mut().set(data);
+            }
             cam.controller = controller.and_then(|c| serde_json::from_value(c).ok());
             cam.node = node;
         }
@@ -264,6 +281,8 @@ pub fn setup_start_cars(scene: &mut Scene)
             // the file keeps no camera link - without it the camera stayed at the start (toylite saved in the editor)
             let cam_name = vehicle.cam_name.clone();
             if let Some(error) = vehicle.attach_camera(scene, &cam_name) { console_warning!("cars: start car camera - {}", error); }
+            // saved before the center hits came (see apply_parameters)
+            vehicle.chassis.center_hits = true;
             continue;
         }
 
@@ -286,7 +305,20 @@ pub fn setup(scene: &mut Scene, controller: &mut VehicleController, car: &NodeIt
     let extra = |key: &str| model.as_ref().and_then(|m| number(&m.read().unwrap(), key));
     controller.vehicle_type = if extra("revolt_class") == Some(0.0) { VehicleType::ElectricCar } else { VehicleType::Car };
 
-    if let Some(error) = controller.auto_setup(scene, name, cam_name)
+    // the setup takes up from how the car lies - one on its roof (pushed over in the showroom) got an upside down frame; the glb up is +y
+    let pose = car.read().unwrap().find_component::<Transformation>().map(|t| { component_downcast!(t, Transformation); *t.get_data() });
+    if let Some(local) = local_transform(car)
+    {
+        let scale = Vector3::new(local.column(0).xyz().norm(), local.column(1).xyz().norm(), local.column(2).xyz().norm());
+        set_local_transform(car, Matrix4::new_translation(&local.column(3).xyz()) * Matrix4::new_nonuniform_scaling(&scale));
+    }
+    let result = controller.auto_setup(scene, name, cam_name);
+    if let (Some(data), Some(transform)) = (pose, car.read().unwrap().find_component::<Transformation>())
+    {
+        component_downcast_mut!(transform, Transformation);
+        transform.get_data_mut().set(data);
+    }
+    if let Some(error) = result
     {
         return Some(error);
     }
@@ -304,21 +336,107 @@ pub fn setup(scene: &mut Scene, controller: &mut VehicleController, car: &NodeIt
 
 const CAMERA_FULL_LENGTH: f32 = 2.0;
 
-// the ufo floats far over jumps like in the game: less gravity while no wheel touches (guessed, not decoded from the exe)
-const UFO_AIR_GRAVITY: f32 = 0.35;
-pub fn update_hover(state: &mut State)
+// the ufo flies on its own on top of the car physics (formats/README.md, ufo) - values in units of the game, mass 1
+const UFO_RIGHTING: f32 = 20000.0;
+const UFO_YAW: f32 = 15000.0;
+const UFO_THRUST: f32 = 2000.0;
+const UFO_SIDE_SLIP: f32 = 5.0;
+const UFO_LIFT: f32 = 0.8;
+// the angular resistance scale of the ufo in the air (ResMod) - spin × (1 - AngRes × it × 120 × dt)
+const UFO_AIR_RES_MOD: f32 = 40.0;
+const RES_STEPS: f32 = 120.0;
+struct Ufo
 {
-    for scene in state.scenes.iter_mut()
+    id: u32,
+    forward: Vector3<f32>,
+    up: Vector3<f32>,
+    target: f32,
+    steer: f32,
+    scale: f32,
+    mass: f32,
+    engine_rate: f32,
+    ang_res: f32,
+}
+
+// the voltage of the motor: it follows the input at EngineRate, a change of direction starts from 0
+#[derive(Default)]
+pub struct Hover
+{
+    voltage: HashMap<u32, f32>,
+}
+
+impl Hover
+{
+    pub fn update(&mut self, state: &mut State, dt: f32)
     {
-        let ids: Vec<u32> = scene.controller.iter().filter_map(|controller| controller.as_any().downcast_ref::<VehicleController>()).filter_map(|vehicle| vehicle.node.as_ref())
-            .filter(|node| node.read().unwrap().extras.get::<String>("revolt_car").is_some_and(|car| car == "ufo")).map(|node| node.read().unwrap().id).collect();
-        for id in ids
+        if dt <= 0.0 { return; }
+        let mut seen = HashSet::new();
+        for scene in state.scenes.iter_mut().filter(|scene| scene.active)
         {
-            let Some((entry, body)) = scene.physics.vehicle_mut(id) else { continue; };
-            let air = !entry.controller.wheels().iter().any(|wheel| wheel.raycast_info().is_in_contact);
-            let gravity = if air { UFO_AIR_GRAVITY } else { 1.0 };
-            if body.gravity_scale() != gravity { body.set_gravity_scale(gravity, true); }
+            let gravity = scene_gravity(scene);
+            let ufos: Vec<Ufo> = scene.controller.iter().filter_map(|controller| controller.as_any().downcast_ref::<VehicleController>()).filter_map(|vehicle|
+            {
+                let node = vehicle.node.as_ref()?;
+                if !node.read().unwrap().extras.get::<String>("revolt_car").is_some_and(|car| car == "ufo") { return None; }
+                let frame = vehicle.frame?;
+                let model = find_child(node, "model")?;
+                let model = model.read().unwrap();
+                let telemetry = vehicle.telemetry();
+                // forward input minus backward input - while reversing the engine calls the backward input throttle
+                let target = if telemetry.gear < 0 { telemetry.brake - telemetry.throttle } else { telemetry.throttle - telemetry.brake };
+                Some(Ufo
+                {
+                    id: node.read().unwrap().id,
+                    forward: frame.forward,
+                    up: frame.up,
+                    target,
+                    steer: telemetry.steer,
+                    scale: number(&model, "revolt_scale").unwrap_or(0.01),
+                    mass: number(&model, "revolt_body_mass").filter(|m| *m > 0.0).unwrap_or(1.0),
+                    engine_rate: number(&model, "revolt_enginerate").unwrap_or(4.5),
+                    ang_res: number(&model, "revolt_body_angres").unwrap_or(0.001),
+                })
+            }).collect();
+
+            for ufo in ufos
+            {
+                seen.insert(ufo.id);
+                let voltage = self.voltage.entry(ufo.id).or_insert(0.0);
+                if ufo.target * *voltage < 0.0 { *voltage = 0.0; }
+                let step = ufo.engine_rate * dt;
+                *voltage += (ufo.target - *voltage).clamp(-step, step);
+                let voltage = *voltage;
+
+                let Some((entry, body)) = scene.physics.vehicle_mut(ufo.id) else { continue; };
+                let air = !entry.controller.wheels().iter().any(|wheel| wheel.raycast_info().is_in_contact);
+                let rotation = *body.rotation();
+                let forward = rotation * Vector::new(ufo.forward.x, ufo.forward.y, ufo.forward.z);
+                let up = rotation * Vector::new(ufo.up.x, ufo.up.y, ufo.up.z);
+                let right = forward.cross(up);
+                let velocity = body.linvel();
+
+                // thrust along the look axis (less when tilted), side slip damped, lift of 0.8 g while not rising and upright
+                // the lift only in the air - on the ground it took the weight off the tires and the wheels hardly steered
+                let mut change = forward * (up.y.abs() * voltage * UFO_THRUST * ufo.scale / ufo.mass * dt) - right * (velocity.dot(right) * UFO_SIDE_SLIP / ufo.mass * dt);
+                if air && velocity.y <= 0.0 && up.y > 0.0 { change += up * (UFO_LIFT * gravity * dt); }
+                body.set_linvel(velocity + change, true);
+
+                // yaw by the steering and a pull back upright, as angular momentum - the inertia of the body is the one of the game × scale² × this
+                let momentum = ufo.scale * ufo.scale * body.mass() / ufo.mass;
+                // the yaw only in the air - on the ground the wheels steer, both together turned too much
+                let yaw = if air { UFO_YAW } else { 0.0 };
+                let torque = up * (ufo.steer * yaw) + up.cross(Vector::Y) * UFO_RIGHTING;
+                body.apply_torque_impulse(torque * (momentum * dt), true);
+
+                if air
+                {
+                    let keep = (1.0 - ufo.ang_res * UFO_AIR_RES_MOD * RES_STEPS * dt).max(0.0);
+                    let spin = body.angvel();
+                    body.set_angvel(spin * keep, true);
+                }
+            }
         }
+        self.voltage.retain(|id, _| seen.contains(id));
     }
 }
 
@@ -344,6 +462,170 @@ pub fn update_suspension(state: &mut State)
 }
 
 const SIDE_NAMES: [&str; 4] = ["front_left", "front_right", "back_left", "back_right"];
+
+// a car only to look at (the menu) - its parts move too
+pub const SHOWN_CAR_TAG: &str = "revolt_shown_car";
+// the wind-up keys of the wincars turn this fast (rad/s, own value - the game turns them at 0.5, one turn in 12.6 s looked like standing still)
+const WIND_UP_SPEED: f32 = 4.0;
+// panga's head follows the steering (the game: the wheel angle × 1.5) instead of spinning
+const HEAD_TURN: f32 = 1.5;
+// the aerial: the tip lags behind the acceleration of its foot, the springs of Parameters.txt (Stiffness 1/s², Damping 1/s) pull it back
+// own model (the game swings 3 spring points) - the sway is an own value, with the plain values a hard launch bent it about 1°
+const AERIAL_SWAY: f32 = 12.0;
+const AERIAL_MAX_BEND: f32 = 1.2;
+const AERIAL_MAX_ACCEL: f32 = 300.0;
+const AERIAL_SUBSTEPS: usize = 4;
+
+struct Spinner
+{
+    parts: Vec<(NodeItem, Matrix4<f32>)>,
+    axis: Vector3<f32>,
+    speed: f32,
+    angle: f32,
+    head: bool,
+}
+
+struct Aerial
+{
+    joints: Vec<(NodeItem, Matrix4<f32>)>,
+    // the aerial node: its world frame
+    node: NodeItem,
+    length: f32,
+    stiffness: f32,
+    damping: f32,
+    // rad about the local x and z axis of the aerial, and their rates
+    bend: Vector3<f32>,
+    rate: Vector3<f32>,
+    // world position and velocity of the foot last frame
+    last: Option<(Vector3<f32>, Option<Vector3<f32>>)>,
+}
+
+// the moving parts of the driven cars: the spinner turns (wind-up key of the wincars, radar of sgt), the head of panga looks into the turn, the aerial sways
+#[derive(Default)]
+pub struct Parts
+{
+    spinners: HashMap<u32, Option<Spinner>>,
+    aerials: HashMap<u32, Option<Aerial>>,
+}
+
+impl Parts
+{
+    pub fn update(&mut self, state: &State, dt: f32)
+    {
+        let mut seen = HashSet::new();
+        for scene in state.scenes.iter().filter(|scene| scene.active)
+        {
+            // the steering of the driven ones - cars only to look at (the menu) steer nothing
+            let steering: HashMap<u32, f32> = scene.controller.iter().filter_map(|controller| controller.as_any().downcast_ref::<VehicleController>())
+                .filter_map(|vehicle| vehicle.node.as_ref().map(|node| (node.read().unwrap().id, vehicle.telemetry().steer * vehicle.steering.max_angle.to_radians())))
+                .collect();
+            // every car glb at the top of the scene: its model node carries the car id
+            for car in scene.nodes.iter().filter(|node| { let tags = &node.read().unwrap().tags; tags.contains("revolt_car") || tags.contains(SHOWN_CAR_TAG) })
+            {
+                let Some(model) = find_child(car, "model").filter(|model| model.read().unwrap().extras.get::<String>("revolt_car").is_some()) else { continue; };
+                let car = car.clone();
+                let id = car.read().unwrap().id;
+                seen.insert(id);
+                let steer = steering.get(&id).copied().unwrap_or(0.0);
+
+                if let Some(spinner) = self.spinners.entry(id).or_insert_with(|| Spinner::find(&car, &model)).as_mut()
+                {
+                    spinner.angle = if spinner.head { steer * HEAD_TURN } else { (spinner.angle + spinner.speed * dt) % std::f32::consts::TAU };
+                    let rotation = UnitQuaternion::from_axis_angle(&Unit::new_normalize(spinner.axis), spinner.angle).to_homogeneous();
+                    for (part, base) in &spinner.parts { set_local_transform(part, base * rotation); }
+                }
+                if let Some(aerial) = self.aerials.entry(id).or_insert_with(|| Aerial::find(&model)).as_mut()
+                {
+                    aerial.update(dt);
+                }
+            }
+        }
+        self.spinners.retain(|id, _| seen.contains(id));
+        self.aerials.retain(|id, _| seen.contains(id));
+    }
+
+    // Play stops: the parts as the converter placed them (the editor keeps the start car)
+    pub fn stop(&mut self)
+    {
+        for spinner in self.spinners.drain().filter_map(|(_, spinner)| spinner)
+        {
+            for (part, base) in spinner.parts { set_local_transform(&part, base); }
+        }
+        for aerial in self.aerials.drain().filter_map(|(_, aerial)| aerial)
+        {
+            for (joint, base) in aerial.joints { set_local_transform(&joint, base); }
+        }
+    }
+}
+
+impl Spinner
+{
+    // the axis and speed of Parameters.txt on the model root (game units: y down, z forward)
+    fn find(car: &NodeItem, model: &NodeItem) -> Option<Spinner>
+    {
+        let mut nodes = vec![];
+        collect_named(model, "spinner", &mut nodes);
+        let parts: Vec<(NodeItem, Matrix4<f32>)> = nodes.into_iter().filter_map(|node| local_transform(&node).map(|base| (node, base))).collect();
+        if parts.is_empty() { return None; }
+        let model = model.read().unwrap();
+        let get = |key: &str| number(&model, key).unwrap_or(0.0);
+        let axis = Vector3::new(get("revolt_spinner_axis_x"), -get("revolt_spinner_axis_y"), -get("revolt_spinner_axis_z"));
+        // the model root has the car id also on cars only to look at
+        let car_id = model.extras.get::<String>("revolt_car").cloned().or_else(|| car.read().unwrap().extras.get::<String>("revolt_car").cloned()).unwrap_or_default();
+        let head = car_id == "panga";
+        // the head turns about the up axis, a spinner about its own one
+        let axis = if head { Vector3::y() } else { axis };
+        if axis.norm() < 1e-4 { return None; }
+        let speed = get("revolt_spinner_angvel");
+        let speed = if car_id.starts_with("wincar") { WIND_UP_SPEED * speed.signum() } else { speed };
+        Some(Spinner { parts, axis, speed, angle: 0.0, head })
+    }
+}
+
+impl Aerial
+{
+    fn find(model: &NodeItem) -> Option<Aerial>
+    {
+        let node = find_child(model, "aerial")?;
+        let (length, stiffness, damping, sections) =
+        {
+            let read = node.read().unwrap();
+            let scale = number(&model.read().unwrap(), "revolt_scale").unwrap_or(0.01);
+            (number(&read, "revolt_aerial_length")? * scale, number(&read, "revolt_aerial_stiffness")?, number(&read, "revolt_aerial_damping").unwrap_or(0.0), number(&read, "revolt_aerial_sections")? as usize)
+        };
+        let joints: Vec<(NodeItem, Matrix4<f32>)> = (0..sections).filter_map(|i| find_child(&node, &format!("aerial_joint_{i}"))).filter_map(|joint| local_transform(&joint).map(|base| (joint, base))).collect();
+        if joints.is_empty() || length <= 0.0 || stiffness <= 0.0 { return None; }
+        Some(Aerial { joints, node, length, stiffness, damping, bend: Vector3::zeros(), rate: Vector3::zeros(), last: None })
+    }
+
+    fn update(&mut self, dt: f32)
+    {
+        if dt <= 0.0 { return; }
+        let transform = self.node.read().unwrap().get_full_transform();
+        let position = transform.column(3).xyz();
+        let velocity = self.last.map(|(last, _)| (position - last) / dt);
+        let accel = match (velocity, self.last.and_then(|(_, v)| v)) { (Some(v), Some(before)) => (v - before) / dt, _ => Vector3::zeros() };
+        self.last = Some((position, velocity));
+        let accel = if accel.norm() > AERIAL_MAX_ACCEL { Vector3::zeros() } else { accel };
+
+        // the acceleration in the frame of the aerial (it points along its +y)
+        let axes = [0, 1, 2].map(|i| transform.column(i).xyz().normalize());
+        let local = Vector3::new(axes[0].dot(&accel), axes[1].dot(&accel), axes[2].dot(&accel));
+        // the tip lags: speeding up along +x bends it about +z towards -x, along +z about -x
+        let push = Vector3::new(-local.z, 0.0, local.x) * AERIAL_SWAY / self.length;
+        let step = dt / AERIAL_SUBSTEPS as f32;
+        for _ in 0..AERIAL_SUBSTEPS
+        {
+            self.rate += (push - self.bend * self.stiffness - self.rate * self.damping) * step;
+            self.bend += self.rate * step;
+        }
+        if self.bend.norm() > AERIAL_MAX_BEND { self.bend *= AERIAL_MAX_BEND / self.bend.norm(); }
+
+        // the same share of the bend at every joint - a smooth curve to the tip
+        let rotation = UnitQuaternion::from_scaled_axis(self.bend / self.joints.len() as f32).to_homogeneous();
+        for (joint, base) in &self.joints { set_local_transform(joint, base * rotation); }
+    }
+}
 
 fn local_transform(node: &NodeItem) -> Option<Matrix4<f32>>
 {
@@ -505,6 +787,8 @@ fn apply_parameters(controller: &mut VehicleController, car: &NodeItem, model: O
         .filter(|w| flag(&w.read().unwrap(), "revolt_isturnable") == Some(true))
         .filter_map(|w| number(&w.read().unwrap(), "revolt_steerratio")).collect();
     let max_ratio = ratios.iter().fold(0.0_f32, |m, r| m.max(r.abs())).max(0.001);
+    // a wheel turns by SteerRatio × the steering in radians - the preset's 35° gave the ufo (0.25 = 14°) 2.4 times its lock
+    if !ratios.is_empty() { controller.steering.max_angle = max_ratio.to_degrees(); }
     for wheel in &mut controller.wheels
     {
         let Some(node) = find_child(car, &wheel.node_name) else { continue; };
@@ -584,6 +868,8 @@ fn apply_parameters(controller: &mut VehicleController, car: &NodeItem, model: O
     controller.chassis.restitution = 0.0;
     // no roll at walls, the heading turns along them (simulated, 96 wall hits: 8 roll-overs -> 1, 2.2 m -> 0.6 m off the wall 1 s later)
     controller.chassis.wall_slide = WALL_SLIDE;
+    // car against car the game pushes through the centers of mass (two balls) from Arcade on - a bump at a rear corner turned the car round
+    controller.chassis.center_hits = true;
 
     // the drive of the game: TopEnd (units/s) as top speed, Acc (m/s² of the speedometer) as launch - the preset made 2-5 m/s² and 0-10° slopes (simulated)
     if let Some(top) = top_end(&model).map(|t| t * scale)
@@ -610,10 +896,14 @@ fn apply_parameters(controller: &mut VehicleController, car: &NodeItem, model: O
 
     // Re-Volt steers fully at top speed - the preset takes 65 % of the lock away at 120 km/h
     controller.steering.high_speed_factor = 1.0;
+    // half of SteerRate away from the middle, 4 times back to it or across
     if let Some(rate) = number(&model, "revolt_steerrate")
     {
-        controller.steering.speed = rate;
+        controller.steering.speed = rate * 0.5;
+        controller.steering.return_speed = rate * 4.0;
     }
+    // the ufo slides all the time on 20 % of its weight - the counter steer turned its wheels against every turn
+    if car.read().unwrap().extras.get::<String>("revolt_car").is_some_and(|id| id == "ufo") { controller.drift.counter_steer = 0.0; }
 
     console_log!("cars: mass {:.1} kg, inertia {:?} kg m², top speed {:.0} km/h, steer rate {:.1}, drive {:?}, wheel bumpers {}",
         controller.chassis.mass, controller.chassis.inertia, controller.engine.top_speed, controller.steering.speed, controller.drive, controller.chassis.wheel_bumpers);
@@ -672,7 +962,10 @@ pub fn add_env_map(state: &mut State, car: &NodeItem, assets: &str)
     }
 }
 
-// the level models with the ENV flag of the .fin (frontend: ufo stand, poster stands, sale bin) get the env map of the level, strength by their env color
+// the cups of the frontend shine in the game too - their models have no ENV polygons, a fixed env color
+const CUP_ENV_COLOR: u32 = 0xc0c0c0;
+
+// the level models with the ENV flag of the .fin (frontend: ufo stand, poster stands, sale bin) and the frontend cups get the env map of the level, strength by their env color
 pub fn add_instance_env_maps(state: &mut State, scene_id: u32, assets: &str)
 {
     let Some(scene) = state.find_scene_by_id(scene_id) else { return; };
@@ -685,6 +978,7 @@ pub fn add_instance_env_maps(state: &mut State, scene_id: u32, assets: &str)
         let env = number(&node_ref, "revolt_fin_flags").is_some_and(|flags| flags as u32 & 1 != 0);
         let color = node_ref.extras.get::<String>("revolt_env_color").and_then(|hex| u32::from_str_radix(hex, 16).ok());
         if let (true, Some(color)) = (env, color) { instances.push((node.clone(), color)); }
+        else if node_ref.tags.contains("revolt_object") && node_ref.tags.contains("cup") { instances.push((node.clone(), CUP_ENV_COLOR)); }
     });
     if instances.is_empty() { return; }
 

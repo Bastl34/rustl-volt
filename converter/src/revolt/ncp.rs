@@ -18,13 +18,13 @@ pub const NCP_FLAG_NAMES: [(i32, &str); 9] = [
     (NCP_NO_SKID, "no skid"), (64, "oil"), (1024, "unknown 1024"), (2048, "unknown 2048"),
 ];
 
-// surface flags in revolt.exe - 1 and 2 are not clear (spark / skid?)
+// surface flags in the game - 1 sparks (formats/README.md "Sparks"), 2 is not clear (skid?)
 pub const SURFACE_OUT_OF_BOUNDS: u32 = 4;
 pub const SURFACE_CORRUGATED: u32 = 8;
 pub const SURFACE_MOVES: u32 = 16;
 pub const SURFACE_DUSTY: u32 = 32;
 
-// the surface material table of revolt.exe (27 entries)
+// the surface material table of the game (27 entries)
 pub struct Surface
 {
     pub name: &'static str,

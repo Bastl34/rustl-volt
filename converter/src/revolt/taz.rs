@@ -35,7 +35,7 @@ pub fn load(path: &Path) -> Result<Vec<Zone>>
         bail!("{} bytes left after parsing - format not fully understood", reader.remaining());
     }
 
-    // the exe sorts by id (stable bubble sort) after loading
+    // the game sorts by id (stable bubble sort) after loading
     zones.sort_by_key(|zone| zone.id);
     Ok(zones)
 }

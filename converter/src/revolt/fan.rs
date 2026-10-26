@@ -30,7 +30,7 @@ pub struct AiNode
 
 pub struct AiNodes
 {
-    // unknown: the exe allocates count + this many nodes
+    // unknown: the game allocates count + this many nodes
     pub extra: i16,
     pub nodes: Vec<AiNode>,
     // unknown tail: a node index and a length (about one lap)

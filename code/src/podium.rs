@@ -9,6 +9,7 @@ use rustl::state::state::State;
 use crate::field::{self, Opponent, Slot};
 use crate::frontend::{Frontend, Target};
 use crate::hud::{suffix, Anchor, Painter, WIDTH};
+use crate::particles::{Kind, Particles, TrailId, TrailKind};
 use crate::random::Random;
 
 // the podium places 1st, 2nd, 3rd and the place beside it, game units (the cars are dropped from this height)
@@ -31,9 +32,14 @@ const FIREWORK_FLIGHT: f32 = 1.0;
 const BURST_TIME: f32 = 0.6;
 const BURST_SIZE: f32 = 2.5;
 const BURST_COLORS: [[f32; 3]; 4] = [[1.0, 0.3, 0.2], [0.3, 1.0, 0.3], [0.3, 0.5, 1.0], [1.0, 0.9, 0.3]];
+// with the burst sparks rain down and bounce like the game (its spark type 25): count, spread m/s
+const BURST_SPARKS: usize = 48;
+// m behind the center of a rocket its trail starts
+const ROCKET_NOZZLE: f32 = 0.3;
+const BURST_SPARK_SPREAD: f32 = 5.0;
 // the putty bomb goes off after 8 s
 // the cars on the podium hop like in the game: m/s up, a chance per check of a resting car
-const HOP_SPEED: f32 = 2.5;
+const HOP_SPEED: f32 = 5.0;
 const HOP_CHECK: f32 = 0.25;
 const HOP_CHANCE: f32 = 0.3;
 const BOMB_TIME: f32 = 8.0;
@@ -55,6 +61,7 @@ struct Rocket
     start: Vector3<f32>,
     time: f32,
     burst: Option<NodeItem>,
+    trail: Option<TrailId>,
 }
 
 pub struct Ceremony
@@ -111,7 +118,7 @@ impl Ceremony
         self.step == Step::Done
     }
 
-    pub fn update(&mut self, state: &mut State, frontend: &mut Frontend, dt: f32)
+    pub fn update(&mut self, state: &mut State, frontend: &mut Frontend, particles: &mut Particles, dt: f32)
     {
         self.time += dt;
         match self.step
@@ -135,9 +142,9 @@ impl Ceremony
             Step::Outro if self.time >= if self.rank <= 3 { OUTRO_PODIUM } else { OUTRO_BELOW } => self.step = Step::Done,
             _ => {},
         }
-        self.fireworks(state, dt);
+        self.fireworks(state, particles, dt);
         self.hop(state, dt);
-        self.update_bomb(state, dt);
+        self.update_bomb(state, particles, dt);
         let target = Target { view: self.view, presented: None, landing: None, letter: 0, picture: None };
         frontend.update(state, &target, dt);
     }
@@ -179,14 +186,14 @@ impl Ceremony
     fn spawn(&mut self, state: &mut State, car: &str, place: usize) -> Option<NodeItem>
     {
         let slot = Slot { floor: game(PLACES[place]), heading: Vector3::z() };
-        match field::spawn_extra(state, self.scene_id, &self.assets, car, &format!("podium_{place}"), slot)
+        match field::spawn_extra(state, self.scene_id, &self.assets, car, &format!("podium_{place}"), slot, None)
         {
             Ok(opponent) => { let node = opponent.node.clone(); self.cars.push(opponent); Some(node) },
             Err(error) => { console_warning!("podium: {}", error); None },
         }
     }
 
-    fn fireworks(&mut self, state: &mut State, dt: f32)
+    fn fireworks(&mut self, state: &mut State, particles: &mut Particles, dt: f32)
     {
         if let Some(next) = self.next_rocket.as_mut()
         {
@@ -199,7 +206,7 @@ impl Ceremony
                 if let Ok(node) = field::show_model(state, self.scene_id, &format!("{}/models/firework.glb", self.assets), "firework")
                 {
                     place(&node, start, 1.0);
-                    self.rockets.push(Rocket { node, start, time: 0.0, burst: None });
+                    self.rockets.push(Rocket { node, start, time: 0.0, burst: None, trail: None });
                     play(state, &self.assets, "firefire", 0.6);
                 }
             }
@@ -210,13 +217,23 @@ impl Ceremony
             rocket.time += dt;
             if rocket.burst.is_none()
             {
-                place(&rocket.node, rocket.start + Vector3::y() * FIREWORK_RISE * rocket.time.min(FIREWORK_FLIGHT), 1.0);
+                let position = rocket.start + Vector3::y() * FIREWORK_RISE * rocket.time.min(FIREWORK_FLIGHT);
+                place(&rocket.node, position, 1.0);
+                // the trail of the game out of the back
+                let nozzle = position - Vector3::y() * ROCKET_NOZZLE;
+                match rocket.trail
+                {
+                    Some(trail) => particles.trail_move(trail, nozzle),
+                    None => rocket.trail = Some(particles.trail_start(self.scene_id, TrailKind::Firework, nozzle)),
+                }
                 if rocket.time >= FIREWORK_FLIGHT
                 {
                     let position = rocket.start + Vector3::y() * FIREWORK_RISE * FIREWORK_FLIGHT;
                     rocket.node.write().unwrap().settings.visible = false;
+                    if let Some(trail) = rocket.trail.take() { particles.trail_end(trail); }
                     let color = BURST_COLORS[((self.random.next() * BURST_COLORS.len() as f32) as usize).min(BURST_COLORS.len() - 1)];
                     rocket.burst = burst(state, self.scene_id, &self.assets, position, color);
+                    particles.burst(self.scene_id, Kind::Spark3, BURST_SPARKS, position, Vector3::zeros(), BURST_SPARK_SPREAD);
                     play(state, &self.assets, "firebang", 0.8);
                 }
             }
@@ -260,7 +277,7 @@ impl Ceremony
         play(state, &self.assets, "fuse", 0.8);
     }
 
-    fn update_bomb(&mut self, state: &mut State, dt: f32)
+    fn update_bomb(&mut self, state: &mut State, particles: &mut Particles, dt: f32)
     {
         let Some((ball, car, time)) = self.bomb.as_mut() else { return; };
         *time += dt;
@@ -273,6 +290,10 @@ impl Ceremony
         self.bomb = None;
         remove(state, self.scene_id, &ball);
         play(state, &self.assets, "puttbang", 1.0);
+        for (kind, count, spread) in crate::shots::BLAST_PARTICLES
+        {
+            particles.burst(self.scene_id, kind, count, position, Vector3::zeros(), spread);
+        }
         let id = car.read().unwrap().id;
         if let Some(scene) = state.find_scene_by_id_mut(self.scene_id)
         {
@@ -287,7 +308,7 @@ impl Ceremony
         if let Some(flash) = flash
         {
             place(&flash, position, BURST_SIZE);
-            self.rockets.push(Rocket { node: flash.clone(), start: position - Vector3::y() * FIREWORK_RISE * FIREWORK_FLIGHT, time: FIREWORK_FLIGHT, burst: Some(flash) });
+            self.rockets.push(Rocket { node: flash.clone(), start: position - Vector3::y() * FIREWORK_RISE * FIREWORK_FLIGHT, time: FIREWORK_FLIGHT, burst: Some(flash), trail: None });
         }
     }
 

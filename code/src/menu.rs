@@ -1,6 +1,6 @@
 // the menu of the game in the frontend level: title, main menu, select race, enter name (the wheel), select car (the boxes), select track (the big screen), options,
 // select cup + its summary (championship), best trial times, progress table, multi-player (split screen: players, devices, then name and car one after another)
-// flow, views and colors like revolt.exe (formats/README.md, Frontend), drawn with the HUD painter in the 640 x 480 space of the game
+// flow, views and colors like the game (formats/README.md, Frontend), drawn with the HUD painter in the 640 x 480 space of the game
 
 use std::collections::HashMap;
 
@@ -45,6 +45,12 @@ const STAR_DARK: [Color32; 3] = [Color32::from_rgba_premultiplied(0x30, 0x30, 0x
 const STAR_STEP: f32 = 22.0;
 const STAR_RADIUS: f32 = 9.0;
 const HINT: Color32 = Color32::from_rgb(0x88, 0x88, 0x88);
+// Select Race: the test levels below a line, in their own color
+const TEST_ITEMS_FROM: usize = 8;
+const TEST_ITEM: Color32 = Color32::from_rgb(0x70, 0xc8, 0xff);
+// the hints of the test levels at their start, s
+pub const TEST_HINT_TIME: f32 = 10.0;
+pub const POWERUP_TEST_HINT: &str = "1-0, -: power-ups (endless)\nBksp: reset   P: menu";
 // the boxes behind titles and items: dark, rounded, a red rim; the tile of the title icon dark red
 const BOX: Color32 = Color32::from_rgba_premultiplied(14, 14, 16, 0xc0);
 const RIM: Color32 = Color32::from_rgb(0xc0, 0x30, 0x28);
@@ -148,6 +154,7 @@ pub enum Screen
     TrialTimes,
     Progress,
     MultiSetup,
+    BattleSettings,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -158,6 +165,13 @@ enum Mode
     TimeTrial,
     Practice,
     StuntArena,
+    BattleTag,
+    // 30 Clockwork cars, no car to choose
+    Clockwork,
+    // the test levels: every car of the game to drive, the power ups on number keys
+    Showroom,
+    PowerupTest,
+    PhysicsTest,
 }
 
 pub struct CarInfo
@@ -197,6 +211,8 @@ pub struct RaceChoice
     pub settings: RaceSettings,
     // the stunt arena: free driving, no race
     pub stunts: bool,
+    // the car showroom (cars.scene): every car of the game, no race
+    pub showroom: bool,
     // a race of the championship: stage and stages of the cup (the loading screen)
     pub cup_stage: Option<(usize, usize)>,
     // split screen: the local players, empty for one player (car and player_name)
@@ -234,6 +250,8 @@ pub struct PlayerSetup
 pub struct MultiSetup
 {
     pub trial: bool,
+    // battle tag in an arena (trial off)
+    pub battle: bool,
     pub players: usize,
     // the number of bots and how hard they drive
     pub opponents: usize,
@@ -247,7 +265,7 @@ impl Default for MultiSetup
 {
     fn default() -> Self
     {
-        Self { trial: false, players: 2, opponents: 4, difficulty: Difficulty::Medium, slots: vec![PlayerSetup::default(); MAX_PLAYERS], turn: 0 }
+        Self { trial: false, battle: false, players: 2, opponents: 4, difficulty: Difficulty::Medium, slots: vec![PlayerSetup::default(); MAX_PLAYERS], turn: 0 }
     }
 }
 
@@ -349,6 +367,10 @@ pub enum MenuEvent
 {
     // the stunt arena: car, player name
     Stunts(String, String),
+    // the test levels: the car showroom, the power up test (car, player name)
+    Showroom,
+    PowerupTest(String, String),
+    PhysicsTest(String, String),
     // name and speed
     Sound(&'static str, f32),
     Start(RaceChoice),
@@ -462,6 +484,8 @@ pub struct Menu
     letter: usize,
     car: usize,
     track: usize,
+    // battle tag: the arena of the track menu (the list of arenas, not the tracks)
+    arena: usize,
     reversed: bool,
     mirrored: bool,
     // best trial times: its track and direction
@@ -499,7 +523,7 @@ impl Menu
         Self
         {
             screen: Screen::Title, cursor: [0; 20], mode: Mode::SingleRace, settings: RaceSettings::default(), audio: AudioSettings::default(), video: VideoSettings::default(),
-            name: String::new(), letter: 0, car: 0, track: 0, reversed: false, mirrored: false, trial_track: 0, trial_reversed: false, trial_mirrored: false,
+            name: String::new(), letter: 0, car: 0, track: 0, arena: 0, reversed: false, mirrored: false, trial_track: 0, trial_reversed: false, trial_mirrored: false,
             message: vec![], screen_time: 0.0, clock: 0.0, events: vec![],
             folder: folder.to_string(), version: String::new(), saved: SaveData::default(), textures: None, failed: false,
             multi: MultiSetup::default(), multi_on: false, solo: None, gamepads: vec![], max_msaa: 8,
@@ -538,9 +562,25 @@ impl Menu
     // the next track of the race menu - the track menu shows it next time
     pub fn set_track(&mut self, index: usize)
     {
-        self.track = index;
+        self.set_track_index(index);
         self.reversed = false;
         self.mirrored = false;
+    }
+
+    // the track menu lists the arenas (the app hands them instead of the tracks)
+    pub fn battle(&self) -> bool
+    {
+        self.mode == Mode::BattleTag && self.screen == Screen::SelectTrack
+    }
+
+    fn track_index(&self) -> usize
+    {
+        if self.mode == Mode::BattleTag { self.arena } else { self.track }
+    }
+
+    fn set_track_index(&mut self, index: usize)
+    {
+        if self.mode == Mode::BattleTag { self.arena = index; } else { self.track = index; }
     }
 
     // after a race: the main menu
@@ -562,7 +602,7 @@ impl Menu
     {
         if self.solo.is_none() { self.solo = Some((self.name.clone(), self.car)); }
         if self.multi.slots[0].name.trim().is_empty() { self.multi.slots[0].name = self.name.clone(); }
-        self.mode = if self.multi.trial { Mode::TimeTrial } else { Mode::SingleRace };
+        self.mode = if self.multi.trial { Mode::TimeTrial } else if self.multi.battle { Mode::BattleTag } else { Mode::SingleRace };
         self.multi.turn = 0;
         self.load_turn();
         self.go(Screen::EnterName);
@@ -605,7 +645,13 @@ impl Menu
         let multi = &mut self.multi;
         match index
         {
-            0 => multi.trial = !multi.trial,
+            // Single Race -> Time Trial -> Battle Tag
+            0 =>
+            {
+                let current = if multi.trial { 1 } else if multi.battle { 2 } else { 0 };
+                let next = step(current, 3, up);
+                (multi.trial, multi.battle) = (next == 1, next == 2);
+            },
             1 =>
             {
                 multi.players = if up { (multi.players + 1).min(MAX_PLAYERS) } else { multi.players.saturating_sub(1).max(2) };
@@ -636,7 +682,7 @@ impl Menu
         let multi = &self.multi;
         match index
         {
-            0 => if multi.trial { "Time Trial" } else { "Single Race" }.to_string(),
+            0 => if multi.trial { "Time Trial" } else if multi.battle { "Battle Tag" } else { "Single Race" }.to_string(),
             1 => multi.players.to_string(),
             2 => if multi.trial { "0".to_string() } else { multi.opponents.to_string() },
             3 => multi.difficulty.label().to_string(),
@@ -673,7 +719,7 @@ impl Menu
             Screen::SelectCar => frontend::VIEW_CAR_BOXES,
             Screen::CarChosen => frontend::VIEW_CAR_FLOOR,
             Screen::SelectTrack => frontend::VIEW_TRACK_SCREEN,
-            Screen::MultiSetup => frontend::VIEW_SELECT_RACE,
+            Screen::MultiSetup | Screen::BattleSettings => frontend::VIEW_SELECT_RACE,
             Screen::Options | Screen::GameSettings | Screen::AudioSettings | Screen::VideoSettings | Screen::Controls => frontend::VIEW_OPTIONS,
             Screen::SelectCup => VIEW_CUPS + available(&self.items(), self.cursor[Screen::SelectCup as usize], true).min(3),
             Screen::CupSummary => VIEW_SUMMARY,
@@ -686,27 +732,45 @@ impl Menu
             presented: car.filter(|_| self.screen == Screen::SelectCar).map(|car| car.box_id),
             landing: car.filter(|_| self.screen == Screen::CarChosen).map(|car| (car.box_id, car.id.clone())),
             letter: self.letter,
-            picture: tracks.get(self.track).map(|track| track.level.clone()),
+            picture: tracks.get(self.track_index()).map(|track| track.level.clone()),
         }
     }
 
     // the stars of the stunt arena: a row at the top, the collected ones gold, the count below
+    // the car showroom: the car driven, how to change it (the first seconds), the menu key
+    pub fn showroom_ui(&mut self, ui: &mut egui::Ui, car: Option<&str>, menu_open: bool, hint: bool)
+    {
+        let Some(textures) = &self.textures else { return; };
+        let mut painter = Painter::new(ui.ctx().content_rect(), vec![textures.font.id(), egui::TextureId::default()]);
+        let title = car.map_or("Car Showroom".to_string(), |car| car.to_uppercase());
+        painter.blue_box(Anchor::Center, [(WIDTH - title.len() as f32 * CHAR_W) * 0.5 - 16.0, 14.0, title.len() as f32 * CHAR_W + 32.0, 32.0]);
+        painter.text(Anchor::Center, (WIDTH - title.len() as f32 * CHAR_W) * 0.5, 22.0, CHAR_W, CHAR_H, NAME, &title);
+        if hint || car.is_none() { centered(&mut painter, 436.0, CHAR_W, CHAR_H, ITEM, "Enter: next car   Bksp: car before"); }
+        if !menu_open { centered(&mut painter, 460.0, CHAR_W, CHAR_H, HINT, "P: menu"); }
+        painter.version(&self.version);
+        painter.finish(ui.ctx(), &[FILL, FONT]);
+    }
+
     pub fn stunt_ui(&mut self, ui: &mut egui::Ui, collected: &[bool], menu_open: bool)
     {
         let Some(textures) = &self.textures else { return; };
         let mut painter = Painter::new(ui.ctx().content_rect(), vec![textures.font.id(), egui::TextureId::default()]);
         let total = collected.len();
         let count = collected.iter().filter(|c| **c).count();
-        let width = total as f32 * STAR_STEP;
-        let left = (WIDTH - width) * 0.5;
-        painter.blue_box(Anchor::Center, [left - 10.0, 10.0, width + 20.0, 46.0]);
-        for (i, done) in collected.iter().enumerate()
+        // free driving without stars (the physics test): no star box
+        if total > 0
         {
-            let [inner, outer, rim] = if *done { STAR_GOLD } else { STAR_DARK };
-            painter.star(Anchor::Center, [left + (i as f32 + 0.5) * STAR_STEP, 28.0], STAR_RADIUS, inner, outer, rim);
+            let width = total as f32 * STAR_STEP;
+            let left = (WIDTH - width) * 0.5;
+            painter.blue_box(Anchor::Center, [left - 10.0, 10.0, width + 20.0, 46.0]);
+            for (i, done) in collected.iter().enumerate()
+            {
+                let [inner, outer, rim] = if *done { STAR_GOLD } else { STAR_DARK };
+                painter.star(Anchor::Center, [left + (i as f32 + 0.5) * STAR_STEP, 28.0], STAR_RADIUS, inner, outer, rim);
+            }
+            let text = format!("{count}/{total}");
+            painter.text(Anchor::Center, (WIDTH - text.len() as f32 * CHAR_W) * 0.5, 40.0, CHAR_W, CHAR_H, if count == total { NAME } else { ITEM }, &text);
         }
-        let text = format!("{count}/{total}");
-        painter.text(Anchor::Center, (WIDTH - text.len() as f32 * CHAR_W) * 0.5, 40.0, CHAR_W, CHAR_H, if count == total { NAME } else { ITEM }, &text);
         if !menu_open { centered(&mut painter, 460.0, CHAR_W, CHAR_H, HINT, "Enter / Esc: menu"); }
         painter.version(&self.version);
         painter.finish(ui.ctx(), &[FILL, FONT]);
@@ -760,8 +824,8 @@ impl Menu
     {
         let track = tracks.iter().find(|track| track.direction_of(choice.scene_id).is_some());
         let (reversed, mirrored) = track.and_then(|track| track.direction_of(choice.scene_id)).unwrap_or((false, false));
-        let mode = if choice.stunts { Mode::StuntArena } else if choice.cup_stage.is_some() { Mode::Championship } else { self.mode };
-        let mode_name = match mode { Mode::Championship => "Championship", Mode::SingleRace => "Single Race", Mode::TimeTrial => "Time Trial", Mode::Practice => "Practice", Mode::StuntArena => "Stunt Arena" };
+        let mode = if choice.stunts { Mode::StuntArena } else if choice.showroom { Mode::Showroom } else if choice.settings.playground { Mode::PowerupTest } else if choice.cup_stage.is_some() { Mode::Championship } else if choice.settings.battle { Mode::BattleTag } else { self.mode };
+        let mode_name = match mode { Mode::Championship => "Championship", Mode::SingleRace => "Single Race", Mode::TimeTrial => "Time Trial", Mode::Practice => "Practice", Mode::StuntArena => "Stunt Arena", Mode::BattleTag => "Battle Tag", Mode::Clockwork => "Clockwork Carnage", Mode::Showroom => "Car Showroom", Mode::PowerupTest => "Power-Up Test", Mode::PhysicsTest => "Physics Test" };
 
         let mut rows = vec![("Game Mode:", mode_name.to_string())];
         if let Some((stage, stages)) = choice.cup_stage
@@ -771,7 +835,8 @@ impl Menu
         if let Some(track) = track
         {
             rows.push(("Track:", format!("{}{}", track.name, variant_tag(reversed, mirrored))));
-            rows.push(("Length:", format!("{:.0}m", track.length)));
+            if mode == Mode::BattleTag { rows.push(("Time:", format_time(crate::battle::BATTLE_TIME))); }
+            else { rows.push(("Length:", format!("{:.0}m", track.length))); }
         }
         if !choice.players.is_empty()
         {
@@ -781,12 +846,12 @@ impl Menu
         {
             rows.push(("Track:", "Stunt Arena".to_string()));
         }
-        if matches!(mode, Mode::SingleRace | Mode::TimeTrial | Mode::Championship)
+        if matches!(mode, Mode::SingleRace | Mode::TimeTrial | Mode::Championship | Mode::Clockwork)
         {
             rows.push(("Laps:", choice.settings.laps.to_string()));
         }
         let car = cars.iter().find(|car| car.id == choice.car).map_or_else(|| choice.car.clone(), |car| car.name.clone());
-        if choice.players.is_empty() { rows.push(("Car:", car)); }
+        if choice.players.is_empty() && !choice.showroom { rows.push(("Car:", car)); }
         if mode == Mode::SingleRace && choice.players.is_empty()
         {
             let level = track.map(|track| variant_key(&track.level, reversed, mirrored)).unwrap_or_default();
@@ -828,6 +893,18 @@ impl Menu
                     self.go(Screen::SelectCar);
                     let car = cars.get(self.car).map_or("rc".to_string(), |car| car.id.clone());
                     self.events.push(MenuEvent::Stunts(car, self.player_name()));
+                },
+                Mode::PhysicsTest =>
+                {
+                    self.go(Screen::SelectCar);
+                    let car = cars.get(self.car).map_or("rc".to_string(), |car| car.id.clone());
+                    self.events.push(MenuEvent::PhysicsTest(car, self.player_name()));
+                },
+                Mode::PowerupTest =>
+                {
+                    self.go(Screen::SelectCar);
+                    let car = cars.get(self.car).map_or("rc".to_string(), |car| car.id.clone());
+                    self.events.push(MenuEvent::PowerupTest(car, self.player_name()));
                 },
                 Mode::Championship => self.go(Screen::SelectCup),
                 _ => self.go(Screen::SelectTrack),
@@ -912,15 +989,16 @@ impl Menu
             Screen::SelectTrack =>
             {
                 if tracks.is_empty() { if back { self.back(); } return; }
+                if self.track_index() >= tracks.len() { self.set_track_index(0); }
                 if input.left || input.right
                 {
-                    self.track = step(self.track, tracks.len(), input.right);
+                    self.set_track_index(step(self.track_index(), tracks.len(), input.right));
                     self.reversed = false;
                     self.mirrored = false;
                     self.sound("tvstatic");
                 }
                 // down the next direction, up the one before - the ones not converted are skipped, Normal is always reachable
-                if let Some(track) = tracks.get(self.track).filter(|_| input.up || input.down)
+                if let Some(track) = tracks.get(self.track_index()).filter(|_| input.up || input.down)
                 {
                     let current = DIRECTIONS.iter().position(|&direction| direction == (self.reversed, self.mirrored)).unwrap_or(0);
                     let next = (1..DIRECTIONS.len())
@@ -938,9 +1016,13 @@ impl Menu
                 }
                 else if input.enter
                 {
-                    let track = &tracks[self.track];
-                    let car = cars.get(self.car).map_or("rc".to_string(), |car| car.id.clone());
+                    let track = &tracks[self.track_index()];
+                    let mut car = cars.get(self.car).map_or("rc".to_string(), |car| car.id.clone());
                     let mut settings = self.settings;
+                    settings.battle = self.mode == Mode::BattleTag;
+                    settings.clockwork = self.mode == Mode::Clockwork;
+                    if settings.clockwork { car = crate::race::CLOCKWORK_CAR.to_string(); settings.cars = crate::race::CLOCKWORK_CARS; }
+                    if settings.battle { settings.cars = 1 + settings.battle_bots; }
                     // time trial and practice: alone, no pickups - practice never ends
                     if matches!(self.mode, Mode::TimeTrial | Mode::Practice)
                     {
@@ -957,6 +1039,7 @@ impl Menu
                         player_name: self.player_name(),
                         settings,
                         stunts: false,
+                        showroom: false,
                         cup_stage: None,
                         players: vec![],
                     }));
@@ -979,7 +1062,8 @@ impl Menu
                 }
                 if input.enter
                 {
-                    if self.multi.valid(&self.gamepads) { self.sound("menunext"); self.begin_turns(); }
+                    if self.multi.valid(&self.gamepads) && self.multi.battle && !self.multi.trial { self.sound("menunext"); self.go(Screen::BattleSettings); }
+                    else if self.multi.valid(&self.gamepads) { self.sound("menunext"); self.begin_turns(); }
                     else { self.sound("menuprev"); }
                 }
                 else if back { self.back(); }
@@ -1027,6 +1111,11 @@ impl Menu
                     self.change_setting(cursor, input.right);
                     self.sound("menuleftright");
                 }
+                if (input.left || input.right) && self.screen == Screen::BattleSettings
+                {
+                    self.change_battle(cursor, input.right);
+                    self.sound("menuleftright");
+                }
                 if (input.left || input.right) && self.screen == Screen::AudioSettings
                 {
                     self.change_audio(cursor, input.right);
@@ -1072,7 +1161,7 @@ impl Menu
         if input.enter
         {
             self.sound("menunext");
-            self.go(Screen::SelectCar);
+            self.go_after_name();
             return;
         }
         // up takes the letter of the wheel
@@ -1080,7 +1169,7 @@ impl Menu
         {
             match self.letter
             {
-                LETTER_END => { self.sound("menunext"); self.go(Screen::SelectCar); },
+                LETTER_END => { self.sound("menunext"); self.go_after_name(); },
                 LETTER_DELETE => { self.name.pop(); self.sound("menuleftright"); },
                 index =>
                 {
@@ -1105,7 +1194,7 @@ impl Menu
     fn start_multi(&mut self, cars: &[CarInfo], tracks: &[TrackInfo])
     {
         self.save_turn();
-        let track = &tracks[self.track];
+        let track = &tracks[self.track_index().min(tracks.len() - 1)];
         let players: Vec<PlayerChoice> = self.multi.slots[..self.multi.players].iter().enumerate().map(|(i, slot)| PlayerChoice
         {
             car: cars.get(slot.car).map_or("rc".to_string(), |car| car.id.clone()),
@@ -1117,6 +1206,7 @@ impl Menu
         let mut settings = self.settings;
         settings.practice = false;
         settings.trial = self.multi.trial;
+        settings.battle = self.multi.battle && !self.multi.trial;
         // time trial: only the players, no pickups - else the players and the bots of the menu
         if self.multi.trial { settings.cars = count; settings.pickups = false; }
         else { settings.cars = (count + self.multi.opponents).min(MAX_CARS); }
@@ -1129,6 +1219,7 @@ impl Menu
             player_name: players[0].name.clone(),
             settings,
             stunts: false,
+            showroom: false,
             cup_stage: None,
             players,
         }));
@@ -1143,7 +1234,7 @@ impl Menu
             Screen::Main => vec![item("Start Race", true), item("Best Trial Times", true), item("Progress Table", true), item("Options", true), item("Quit", true)],
             Screen::SelectMode => DriveMode::ALL.iter().map(|mode| item(mode.label(), true)).collect(),
             Screen::SelectCup => CUPS.iter().enumerate().map(|(i, cup)| item(cup.name, self.saved.cup_open(i))).collect(),
-            Screen::SelectRace => vec![item("Single Race", true), item("Championship", true), item("Clockwork Carnage", false), item("Time Trial", true), item("Practice", true), item("Stunt Arena", true), item("Split Screen", true)],
+            Screen::SelectRace => vec![item("Single Race", true), item("Championship", true), item("Clockwork Carnage", true), item("Time Trial", true), item("Practice", true), item("Stunt Arena", true), item("Battle Tag", true), item("Split Screen", true), item("Car Showroom", true), item("Power-Up Test", true), item("Physics Test", true)],
             Screen::MultiSetup =>
             {
                 let racing = !self.multi.trial;
@@ -1160,6 +1251,7 @@ impl Menu
             Screen::VideoSettings => vec![item("Fullscreen", true), item("Show FPS", true), item("Antialiasing", true), item("Shadows", true), item("Reset to Defaults", true)],
             Screen::GameSettings => vec![item("Number of Cars", true), item("Number of Laps", true), item("Difficulty", true), item("Pick ups", true), item("Speed Units", true)],
             Screen::AudioSettings => vec![item("Master Volume", true), item("Music Volume", true), item("Effects Volume", true)],
+            Screen::BattleSettings => vec![item("Opponents", true), item("Difficulty", true), item("Pick ups", true), item("Stars", true), item("Take Over", true), item("Start", true)],
             Screen::Quit => vec![item("Yes", true), item("No", true)],
             _ => vec![],
         }
@@ -1193,6 +1285,48 @@ impl Menu
             },
             3 => settings.pickups = !settings.pickups,
             _ => settings.kmh = !settings.kmh,
+        }
+    }
+
+    // opponents and difficulty: of the split screen menu there, else of the battle alone; the rest for both
+    fn battle_value(&self, index: usize) -> String
+    {
+        match index
+        {
+            0 => if self.multi_on { self.multi.opponents } else { self.settings.battle_bots }.to_string(),
+            1 => if self.multi_on { self.multi.difficulty } else { self.settings.difficulty }.label().to_string(),
+            2 => if self.settings.pickups { "On" } else { "Off" }.to_string(),
+            3 => if self.settings.one_star { "One" } else { "All" }.to_string(),
+            4 => if self.settings.contact { "Ramming" } else { "Close" }.to_string(),
+            _ => String::new(),
+        }
+    }
+
+    fn change_battle(&mut self, index: usize, up: bool)
+    {
+        let difficulty = |current: Difficulty| { let all = Difficulty::ALL; let i = all.iter().position(|d| *d == current).unwrap_or(1); all[if up { (i + 1).min(all.len() - 1) } else { i.saturating_sub(1) }] };
+        match index
+        {
+            0 if self.multi_on => self.multi.opponents = if up { (self.multi.opponents + 1).min(MAX_CARS - self.multi.players) } else { self.multi.opponents.saturating_sub(1) },
+            0 => self.settings.battle_bots = if up { (self.settings.battle_bots + 1).min(MAX_CARS - 1) } else { self.settings.battle_bots.saturating_sub(1) },
+            1 if self.multi_on => self.multi.difficulty = difficulty(self.multi.difficulty),
+            1 => self.settings.difficulty = difficulty(self.settings.difficulty),
+            2 => self.settings.pickups = !self.settings.pickups,
+            3 => self.settings.one_star = !self.settings.one_star,
+            4 => self.settings.contact = !self.settings.contact,
+            _ => {},
+        }
+    }
+
+    fn battle_hint(&self) -> &'static str
+    {
+        match available(&self.items(), self.cursor[Screen::BattleSettings as usize], true)
+        {
+            3 if self.settings.one_star => "One random star of the arena is out (the original: all of them)",
+            3 => "All stars of the arena are out, each one gives the star - like the original",
+            4 if self.settings.contact => "Ram the holder to take the star (the original: get close)",
+            4 => "Get within 4 m of the holder with a free line to take it - like the original",
+            _ => "Left/Right: change   Enter: go on",
         }
     }
 
@@ -1262,11 +1396,18 @@ impl Menu
             // races go through Select Mode first like the game (the stunt arena not)
             (Screen::SelectRace, 0) => { self.mode = Mode::SingleRace; self.go_select_mode(); },
             (Screen::SelectRace, 1) => { self.mode = Mode::Championship; self.go_select_mode(); },
+            (Screen::SelectRace, 2) => { self.mode = Mode::Clockwork; self.go_select_mode(); },
+            // the test levels: the showroom at once, the power up test with a car of the menu
+            (Screen::SelectRace, 8) => { self.mode = Mode::Showroom; self.events.push(MenuEvent::Showroom); },
+            (Screen::SelectRace, 9) => { self.mode = Mode::PowerupTest; self.go(Screen::SelectCar); },
+            (Screen::SelectRace, 10) => { self.mode = Mode::PhysicsTest; self.go(Screen::SelectCar); },
             (Screen::SelectRace, 3) => { self.mode = Mode::TimeTrial; self.go_select_mode(); },
             (Screen::SelectRace, 4) => { self.mode = Mode::Practice; self.go_select_mode(); },
             (Screen::SelectMode, index) => { self.settings.mode = DriveMode::ALL[index.min(DriveMode::ALL.len() - 1)]; self.go(Screen::EnterName); },
             (Screen::SelectRace, 5) => { self.mode = Mode::StuntArena; self.go(Screen::EnterName); },
-            (Screen::SelectRace, 6) =>
+            (Screen::SelectRace, 6) => { self.mode = Mode::BattleTag; self.go(Screen::BattleSettings); },
+            (Screen::BattleSettings, _) => if self.multi_on { self.begin_turns(); } else { self.go_select_mode(); },
+            (Screen::SelectRace, 7) =>
             {
                 self.multi_on = true;
                 let pads = self.gamepads.clone();
@@ -1296,7 +1437,10 @@ impl Menu
             Screen::CupSummary => Screen::SelectCup,
             Screen::MultiSetup => { self.end_multi(); Screen::SelectRace },
             // split screen: back to the setup, or to the car of the player before
-            Screen::EnterName if self.multi_on && self.multi.turn == 0 => { self.save_turn(); Screen::MultiSetup },
+            Screen::EnterName if self.multi_on && self.multi.turn == 0 => { self.save_turn(); if self.multi.battle && !self.multi.trial { Screen::BattleSettings } else { Screen::MultiSetup } },
+            Screen::BattleSettings if self.multi_on => Screen::MultiSetup,
+            Screen::BattleSettings => Screen::SelectRace,
+            Screen::SelectMode if self.mode == Mode::BattleTag => Screen::BattleSettings,
             Screen::EnterName if self.multi_on =>
             {
                 self.save_turn();
@@ -1307,13 +1451,21 @@ impl Menu
             Screen::EnterName if self.mode == Mode::StuntArena => Screen::SelectRace,
             Screen::EnterName => Screen::SelectMode,
             Screen::SelectMode => Screen::SelectRace,
+            Screen::SelectCar if matches!(self.mode, Mode::PowerupTest | Mode::PhysicsTest) => Screen::SelectRace,
             Screen::SelectCar => Screen::EnterName,
             Screen::CarChosen => Screen::SelectCar,
+            Screen::SelectTrack if self.mode == Mode::Clockwork => Screen::EnterName,
             Screen::SelectTrack => Screen::SelectCar,
             Screen::GameSettings | Screen::AudioSettings | Screen::VideoSettings | Screen::Controls => Screen::Options,
         };
         self.sound("menuprev");
         self.go(previous);
+    }
+
+    // the car comes next - Clockwork Carnage has its car, the track comes next
+    fn go_after_name(&mut self)
+    {
+        self.go(if self.mode == Mode::Clockwork { Screen::SelectTrack } else { Screen::SelectCar });
     }
 
     // the cursor on the mode of the last race
@@ -1399,6 +1551,12 @@ impl Menu
             Screen::AudioSettings => { title(painter, "Audio Settings", Some(ICON_OPTIONS), has_icons); self.draw_items(painter, Some(100.0), 150.0); },
             Screen::VideoSettings => { title(painter, "Video Settings", Some(ICON_OPTIONS), has_icons); self.draw_items(painter, Some(100.0), 150.0); },
             Screen::Controls => { title(painter, "Controller Settings", Some(ICON_OPTIONS), has_icons); draw_controls(painter); },
+            Screen::BattleSettings =>
+            {
+                title(painter, "Battle Settings", Some(ICON_RACE), has_icons);
+                self.draw_items(painter, Some(100.0), 150.0);
+                centered(painter, 440.0, CHAR_W, CHAR_H, HINT, self.battle_hint());
+            },
             Screen::EnterName => { title(painter, &self.turn_label().map_or("Enter Name".to_string(), |player| format!("{player} Name")), Some(ICON_NAME), has_icons); self.draw_name(painter); },
             Screen::SelectCar | Screen::CarChosen => { title(painter, &self.turn_label().map_or("Select Car".to_string(), |player| format!("{player} Car")), Some(ICON_CAR), has_icons); self.draw_car(painter, cars); },
             Screen::MultiSetup =>
@@ -1528,16 +1686,21 @@ impl Menu
         let items = self.items();
         let cursor = available(&items, self.cursor[self.screen as usize], true);
         let label_width = items.iter().map(|(label, _)| label.len()).max().unwrap_or(0) as f32 * CHAR_W;
-        let values: Vec<String> = (0..items.len()).map(|i| match self.screen { Screen::GameSettings => self.setting_value(i), Screen::AudioSettings => self.audio_value(i), Screen::VideoSettings => self.video_value(i), Screen::MultiSetup => self.multi_value(i), _ => String::new() }).collect();
+        let values: Vec<String> = (0..items.len()).map(|i| match self.screen { Screen::GameSettings => self.setting_value(i), Screen::AudioSettings => self.audio_value(i), Screen::VideoSettings => self.video_value(i), Screen::MultiSetup => self.multi_value(i), Screen::BattleSettings => self.battle_value(i), _ => String::new() }).collect();
         let value_width = values.iter().map(|v| v.len()).max().unwrap_or(0) as f32 * CHAR_W;
         let width = label_width + if value_width > 0.0 { 3.0 * CHAR_W + value_width } else { 0.0 };
         let anchor = if x.is_some() { Anchor::Left } else { Anchor::Center };
         let x = x.unwrap_or((WIDTH - width) * 0.5);
-        framed_box(painter, anchor, [x - 20.0, y - 24.0, width + 40.0, items.len() as f32 * ROW + 44.0 - 4.0]);
+        // Select Race: a line, then the test levels in their own color
+        let tests = (self.screen == Screen::SelectRace && items.len() > TEST_ITEMS_FROM).then_some(TEST_ITEMS_FROM);
+        let gap = if tests.is_some() { ROW } else { 0.0 };
+        framed_box(painter, anchor, [x - 20.0, y - 24.0, width + 40.0, items.len() as f32 * ROW + gap + 44.0 - 4.0]);
+        if let Some(from) = tests { painter.rounded(anchor, [x - 8.0, y + from as f32 * ROW + (gap - ROW + CHAR_H) * 0.5 - 1.0, width + 16.0, 2.0], RIM, RIM, 0.0, 0.0); }
         for (i, (label, available)) in items.iter().enumerate()
         {
-            let color = match (i == cursor, *available) { (true, true) => SELECTED, (false, true) => ITEM, (true, false) => SELECTED_DISABLED, (false, false) => DISABLED };
-            let row_y = y + i as f32 * ROW;
+            let test = tests.is_some_and(|from| i >= from);
+            let color = match (i == cursor, *available) { (true, true) => SELECTED, (false, true) if test => TEST_ITEM, (false, true) => ITEM, (true, false) => SELECTED_DISABLED, (false, false) => DISABLED };
+            let row_y = y + i as f32 * ROW + if test { gap } else { 0.0 };
             let label_x = if matches!(self.screen, Screen::Main | Screen::Quit) { x + (width - label.len() as f32 * CHAR_W) * 0.5 } else { x };
             painter.text(anchor, label_x, row_y, CHAR_W, CHAR_H, color, label);
             if !values[i].is_empty()
@@ -1634,13 +1797,18 @@ impl Menu
     fn draw_track(&self, painter: &mut Painter, tracks: &[TrackInfo])
     {
         let (x, y) = (100.0, 380.0);
-        let Some(track) = tracks.get(self.track) else
+        let Some(track) = tracks.get(self.track_index()) else
         {
-            painter.text(Anchor::Left, x, y, CHAR_W, CHAR_H, ITEM, "No tracks - convert the levels first");
+            painter.text(Anchor::Left, x, y, CHAR_W, CHAR_H, ITEM, if self.mode == Mode::BattleTag { "No arenas - convert the battle levels first" } else { "No tracks - convert the levels first" });
             return;
         };
+        if self.mode == Mode::BattleTag
+        {
+            self.draw_arena(painter, track, tracks.len());
+            return;
+        }
         let direction = direction_name(self.reversed, self.mirrored);
-        let laps = match self.mode { Mode::TimeTrial => "Time Trial".to_string(), Mode::Practice => "Practice - find the star".to_string(), _ => format!("{} laps, {} cars", self.settings.laps, self.settings.cars) };
+        let laps = match self.mode { Mode::TimeTrial => "Time Trial".to_string(), Mode::Practice => "Practice - find the star".to_string(), Mode::Clockwork => format!("{} laps, {} Clockworks", self.settings.laps, crate::race::CLOCKWORK_CARS), _ => format!("{} laps, {} cars", self.settings.laps, self.settings.cars) };
         let laps = match self.multi_on
         {
             true if self.multi.trial => format!("{laps}, {} players", self.multi.players),
@@ -1670,6 +1838,26 @@ impl Menu
         }
         let directions = if others { "   Up: mirrored  Down: reversed" } else { "" };
         centered(painter, 460.0, CHAR_W, CHAR_H, HINT, &format!("< {} / {} >{directions}   Enter: race", self.track + 1, tracks.len()));
+    }
+
+    // battle tag: the arena, who plays, the rule
+    fn draw_arena(&self, painter: &mut Painter, arena: &TrackInfo, count: usize)
+    {
+        let x = 100.0;
+        let who = match self.multi_on
+        {
+            true => format!("{} players, {} bots ({})", self.multi.players, self.multi.opponents, self.multi.difficulty.label()),
+            false => format!("{} bots ({}), {}", self.settings.battle_bots, self.settings.difficulty.label(), self.settings.mode.label()),
+        };
+        let rows = [arena.name.clone(), format!("Battle Tag, {who}"), format!("Hold the star for {} to win", format_time(crate::battle::BATTLE_TIME))];
+        let y = 420.0 - (rows.len() - 1) as f32 * ROW;
+        let width = rows.iter().map(|r| r.len()).max().unwrap_or(0) as f32 * CHAR_W;
+        dark_box(painter, [x - 20.0, y - 24.0, width + 40.0, rows.len() as f32 * ROW + 40.0]);
+        for (i, row) in rows.iter().enumerate()
+        {
+            painter.text(Anchor::Left, x, y + i as f32 * ROW, CHAR_W, CHAR_H, if i == 0 { SELECTED } else { ITEM }, row);
+        }
+        centered(painter, 460.0, CHAR_W, CHAR_H, HINT, &format!("< {} / {} >   Enter: battle", self.arena + 1, count));
     }
 }
 
@@ -1843,6 +2031,19 @@ fn model_extras(bytes: &[u8]) -> Option<Value>
 // length and level name of a track scene by scene id - a not loaded scene is read from its file once
 pub type TrackCache = HashMap<u32, Option<(f32, Option<String>)>>;
 
+// the battle arenas of the project in the order of the game - their names read once per scene (from the file if not loaded)
+pub fn load_arenas(state: &State, cache: &mut HashMap<u32, Option<String>>) -> Vec<TrackInfo>
+{
+    let mut arenas: Vec<TrackInfo> = state.scenes.iter().filter(|scene| crate::battle::is_arena(&scene.name)).map(|scene|
+    {
+        let name = cache.entry(scene.id).or_insert_with(|| if scene.is_loaded() { level_name(scene) } else { crate::track::Track::level_name_from_file(scene) }).clone();
+        TrackInfo { level: scene.name.to_lowercase(), name: name.unwrap_or_else(|| scene.name.clone()), scene_id: scene.id, reversed: None, mirrored: None, reversed_mirrored: None, length: 0.0 }
+    }).collect();
+    let rank = |level: &str| crate::battle::ARENAS.iter().position(|arena| *arena == level).unwrap_or(usize::MAX);
+    arenas.sort_by_key(|arena| rank(&arena.level));
+    arenas
+}
+
 pub fn load_tracks(state: &State, cache: &mut TrackCache) -> Vec<TrackInfo>
 {
     let mut tracks: Vec<TrackInfo> = vec![];
@@ -1900,6 +2101,8 @@ pub enum RaceMenuKind
     Stunts,
     // the pause of a championship race: no restart, a try can be given up
     Championship,
+    // the car showroom: only back to the game or the menu
+    Showroom,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -1932,6 +2135,7 @@ impl RaceMenu
             RaceMenuKind::Pause => vec![("Continue", RaceAction::Resume), ("Restart Race", RaceAction::Restart)],
             RaceMenuKind::Finished => vec![("Restart Race", RaceAction::Restart)],
             RaceMenuKind::Stunts => vec![("Resume", RaceAction::Resume), ("Restart", RaceAction::Restart)],
+            RaceMenuKind::Showroom => vec![("Resume", RaceAction::Resume)],
             RaceMenuKind::Championship => vec![("Continue Championship", RaceAction::Resume), ("Give Up Try", RaceAction::GiveUp), ("End Championship", RaceAction::MainMenu)],
         };
         if with_menu && kind != RaceMenuKind::Championship
@@ -1984,11 +2188,11 @@ impl RaceMenu
         let Some(font) = &self.font else { return; };
         let mut painter = Painter::new(ui.ctx().content_rect(), vec![font.id(), egui::TextureId::default()]);
 
-        let title = match self.kind { RaceMenuKind::Pause | RaceMenuKind::Championship => "Paused", RaceMenuKind::Finished => "Race Over", RaceMenuKind::Stunts => "Stunt Arena" };
+        let title = match self.kind { RaceMenuKind::Pause | RaceMenuKind::Championship => "Paused", RaceMenuKind::Finished => "Race Over", RaceMenuKind::Stunts => "Stunt Arena", RaceMenuKind::Showroom => "Car Showroom" };
         let width = self.items.iter().map(|(label, _)| label.len()).max().unwrap_or(0).max(title.len() * 2) as f32 * CHAR_W;
         let height = 32.0 + self.items.len() as f32 * ROW;
         let x = (WIDTH - width) * 0.5;
-        let y = match self.kind { RaceMenuKind::Pause | RaceMenuKind::Stunts | RaceMenuKind::Championship => 180.0, RaceMenuKind::Finished => HEIGHT - height - 40.0 };
+        let y = match self.kind { RaceMenuKind::Pause | RaceMenuKind::Stunts | RaceMenuKind::Championship | RaceMenuKind::Showroom => 180.0, RaceMenuKind::Finished => HEIGHT - height - 40.0 };
         framed_box(&mut painter, Anchor::Center, [x - 20.0, y - 16.0, width + 40.0, height + 28.0]);
         painter.text(Anchor::Center, (WIDTH - title.len() as f32 * 16.0) * 0.5, y - 4.0, 16.0, 24.0, ITEM, title);
         for (i, (label, _)) in self.items.iter().enumerate()

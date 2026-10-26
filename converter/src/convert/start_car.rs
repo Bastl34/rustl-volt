@@ -17,9 +17,15 @@ const LIFT: f32 = 0.05;
 const GRID_SLOTS: usize = 12;
 const GRID_STEP: f32 = 120.0;
 const GRID_SIDE: f32 = 100.0;
+// the grid of Clockwork Carnage (game mode 3): 30 slots, 5 per row from 40 units left of STARTPOS 80 apart, the rows 100 units back
+const CLOCKWORK_SLOTS: usize = 30;
+const CLOCKWORK_ROW: usize = 5;
+const CLOCKWORK_SIDE: [f32; 2] = [-40.0, 80.0];
+const CLOCKWORK_STEP: f32 = 100.0;
 // units the floor may lie above STARTPOS (y down) and still count as the floor under it
 const FLOOR_ABOVE: f32 = 20.0;
 
+#[derive(Clone)]
 pub struct StartCar
 {
     pub object: Value,
@@ -131,18 +137,18 @@ fn grid(ncp: Option<&Ncp>, start: [f32; 3], yaw: f32, scale: f32, log: &Log) -> 
     let right = [cos, 0.0, -sin];
 
     let mut missing = 0;
-    let slots: Vec<[f64; 3]> = (0..GRID_SLOTS).map(|i|
+    let mut slot = |side: f32, along: f32|
     {
-        let side = if i % 2 == 0 { -GRID_SIDE } else { GRID_SIDE } * scale;
-        let along = i as f32 * GRID_STEP * scale;
-        let p = [0, 1, 2].map(|a| start[a] + back[a] * along + right[a] * side);
+        let p = [0, 1, 2].map(|a| start[a] + back[a] * along * scale + right[a] * side * scale);
         let floor = ncp.and_then(|ncp| floor_below(ncp, p, scale)).unwrap_or_else(|| { missing += 1; p[1] });
         [p[0], floor, p[2]].map(|v| (v as f64 * 1e4).round() / 1e4)
-    }).collect();
+    };
+    let slots: Vec<[f64; 3]> = (0..GRID_SLOTS).map(|i| slot(if i % 2 == 0 { -GRID_SIDE } else { GRID_SIDE }, i as f32 * GRID_STEP)).collect();
+    let clockwork: Vec<[f64; 3]> = (0..CLOCKWORK_SLOTS).map(|i| slot(CLOCKWORK_SIDE[0] + (i % CLOCKWORK_ROW) as f32 * CLOCKWORK_SIDE[1], (i / CLOCKWORK_ROW) as f32 * CLOCKWORK_STEP)).collect();
 
-    log.info(format!("  start grid: {GRID_SLOTS} slots, {:.1} m apart, ±{:.2} m to the side{}", GRID_STEP * scale, GRID_SIDE * scale,
+    log.info(format!("  start grid: {GRID_SLOTS} slots, {:.1} m apart, ±{:.2} m to the side + {CLOCKWORK_SLOTS} for Clockwork Carnage{}", GRID_STEP * scale, GRID_SIDE * scale,
         if missing > 0 { format!(" - {missing} without a floor below (at STARTPOS height)") } else { String::new() }));
-    json!({ "yaw": yaw, "slots": slots })
+    json!({ "yaw": yaw, "slots": slots, "clockwork": clockwork })
 }
 
 // the highest upward floor polygon under the start (glTF meters in and out)

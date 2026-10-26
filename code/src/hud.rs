@@ -1,5 +1,5 @@
-// the race HUD of revolt.exe (formats/README.md, HUD): its pages font / fxpage2, own boxes and speed dots, its positions on a 640 x 480 screen
-// scaled with the height; right and centered items keep their distance to the right edge / the center (the exe adds the extra width the same way)
+// the race HUD of the game (formats/README.md, HUD): its pages font / fxpage2, own boxes and speed dots, its positions on a 640 x 480 screen
+// scaled with the height; right and centered items keep their distance to the right edge / the center (the game adds the extra width the same way)
 
 use std::f32::consts::FRAC_PI_4;
 
@@ -17,11 +17,16 @@ pub const HEIGHT: f32 = 480.0;
 pub const CYAN: Color32 = Color32::from_rgb(0, 255, 255);
 pub const WHITE: Color32 = Color32::WHITE;
 const AMMO: Color32 = Color32::from_rgb(255, 170, 34);
+// battle tag: the star of the holder (own design) - inner, outer, rim; the name of the holder
+const STAR_COLORS: [Color32; 3] = [Color32::from_rgb(0xff, 0xfa, 0xc8), Color32::from_rgb(0xff, 0xb8, 0x00), Color32::from_rgb(0x80, 0x48, 0x00)];
+const HOLDER: Color32 = Color32::from_rgb(255, 64, 32);
+// game metres per metre of ours (like the cars ahead / behind)
+const BATTLE_METRES: f32 = 0.5;
 // sprite alpha, the weapon frame a bit more opaque
 const SPRITE_ALPHA: u8 = 0xC0;
 const FRAME_ALPHA: u8 = 0xE0;
 
-// font.bmp: 32 glyphs of 8 x 16 texels per row from '!', the glyph is 7 wide - in units of the 256 page, the font of the project (ui/font.png) is 512 (the exe reads v 1..17)
+// font.bmp: 32 glyphs of 8 x 16 texels per row from '!', the glyph is 7 wide - in units of the 256 page, the font of the project (ui/font.png) is 512 (the game reads v 1..17)
 const GLYPH_FIRST: u32 = 0x21;
 const GLYPHS_PER_ROW: u32 = 32;
 
@@ -35,7 +40,7 @@ const SIGN_UV: [[f32; 4]; 11] =
     [127.0, 1.0, -62.0, 62.0], [63.0, 1.0, -62.0, 62.0], [126.0, 65.0, -61.0, 62.0], [255.0, 1.0, -62.0, 62.0], [65.0, 1.0, 62.0, 62.0], [1.0, 1.0, 62.0, 62.0],
     [65.0, 65.0, 62.0, 62.0], [193.0, 1.0, 62.0, 62.0], [1.0, 65.0, 62.0, 62.0], [129.0, 1.0, 62.0, 62.0], [193.0, 65.0, 62.0, 62.0],
 ];
-// the 7 speed dots of the exe (top left and size on screen, right anchored), drawn as own balls: the dark and the lit color of each (from fxpage2)
+// the 7 speed dots of the game (top left and size on screen, right anchored), drawn as own balls: the dark and the lit color of each (from fxpage2)
 const DOT_POSITIONS: [[f32; 2]; 7] = [[492.0, 451.0], [502.0, 435.0], [517.0, 422.0], [536.0, 412.0], [558.0, 405.0], [581.0, 400.0], [606.0, 399.0]];
 const DOT_SIZES: [f32; 7] = [14.0, 16.0, 18.0, 19.0, 21.0, 22.0, 23.0];
 const DOT_DARK: [[u8; 3]; 7] = [[92, 4, 2], [87, 8, 0], [84, 22, 0], [88, 44, 0], [49, 77, 6], [22, 52, 10], [6, 52, 15]];
@@ -55,7 +60,7 @@ const CELL_LINE: f32 = 2.0;
 const VERSION_W: f32 = 5.0;
 const VERSION_H: f32 = 7.5;
 const VERSION_COLOR: Color32 = Color32::WHITE;
-// the 3D countdown of the exe (models/go*.m), drawn by the camera at (0, -32, 256) game units with a lens of 640 on the 640 x 480 screen
+// the 3D countdown of the game (models/go*.m), drawn by the camera at (0, -32, 256) game units with a lens of 640 on the 640 x 480 screen
 const COUNTDOWN_MODELS: [&str; 4] = ["gogo", "go1", "go2", "go3"];
 const COUNTDOWN_LENS: f32 = 640.0;
 const COUNTDOWN_HEIGHT: f32 = -32.0;
@@ -63,7 +68,7 @@ const COUNTDOWN_DEPTH: f32 = 256.0;
 // turns per ms while a number flips in / out (the first 100 ms and the last 100 ms of its second)
 const COUNTDOWN_FLIP: f32 = 0.0025;
 
-// mph per m/s: the speedometer of the exe counts 0.01118 mph per unit/s, 100 units per m
+// mph per m/s: the speedometer of the game counts 0.01118 mph per unit/s, 100 units per m
 const MPH_PER_MPS: f32 = 100.0 * 0.01118;
 // km/h per mph
 const KMH_PER_MPH: f32 = 1.609344;
@@ -103,6 +108,11 @@ pub struct Hud
     mirrored: bool,
     // the results after the finish - off while the championship shows its table
     pub results: bool,
+    // over the 3D: the reticles of the fireworks (normalized, y down; green on the own target, red on the own car while aimed at), the flash 0..1
+    pub reticles: Vec<([f32; 2], bool)>,
+    pub flash: f32,
+    // the lightning of the weather 0..1
+    pub lightning: f32,
     // Video Settings: Show FPS
     pub show_fps: bool,
 }
@@ -126,7 +136,7 @@ impl Hud
         let source = scene.source.as_ref().map(|source| source.origin_path.replace('\\', "/")).unwrap_or_default();
         let folder = source.rsplit_once('/').map(|(folder, _)| folder.to_string()).unwrap_or_default();
         let assets = if folder.is_empty() { "assets".to_string() } else { format!("{folder}/assets") };
-        Self { assets, textures: None, failed: false, dots: vec![], clock: 0.0, hint: true, version: String::new(), message: None, results: true, mirrored: scene.name.to_lowercase().ends_with("_mirrored"), show_fps: true }
+        Self { assets, textures: None, failed: false, dots: vec![], clock: 0.0, hint: true, version: String::new(), message: None, results: true, reticles: vec![], flash: 0.0, lightning: 0.0, mirrored: scene.name.to_lowercase().ends_with("_mirrored"), show_fps: true }
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, race: &Race, weapons: Option<&Weapons>, fps: u32, dt: f32)
@@ -176,7 +186,7 @@ impl Hud
                 {
                     // split screen: the fps in the HUD of player 1 (bottom left) - top right it covered the times of the right cell
                     true => self.draw_racer(&mut painter, race, index, weapons, (self.show_fps && index == race.player_index()).then_some(fps)),
-                    false => painter.split_label(&race.racers[index], race.settings.laps),
+                    false => painter.split_label(&race.racers[index], race.settings.laps, race.battle.as_ref().map(|battle| battle.clock(index))),
                 }
                 if race.multi() { painter.shapes.push(egui::Shape::rect_stroke(cell, 0.0, egui::Stroke::new(CELL_LINE, Color32::BLACK), egui::StrokeKind::Inside)); }
             }
@@ -194,19 +204,20 @@ impl Hud
             }
             if let Some((text, _)) = &self.message
             {
-                painter.text(Anchor::Center, 320.0 - text.len() as f32 * 8.0, 80.0, 16.0, 24.0, WHITE, text);
+                message(&mut painter, text, message_y(race));
             }
             if self.results && (race.over || race.locals_finished()) { painter.results(race, self.hint); }
             painter.version(&self.version);
             let countdown = painter.countdown(race, &textures.countdown, self.mirrored);
             painter.meshes.push(countdown);
+            self.overlays(&mut painter, rect);
             painter.finish_all(ui.ctx());
             return;
         }
 
         if let Some((text, _)) = &self.message
         {
-            painter.text(Anchor::Center, 320.0 - text.len() as f32 * 8.0, 80.0, 16.0, 24.0, WHITE, text);
+            message(&mut painter, text, message_y(race));
         }
 
         let racer = race.viewed();
@@ -222,6 +233,24 @@ impl Hud
             painter.version(&self.version);
             let countdown = painter.countdown(race, &textures.countdown, self.mirrored);
             painter.meshes.push(countdown);
+            self.overlays(&mut painter, rect);
+            painter.finish_all(ui.ctx());
+            return;
+        }
+
+        // the power up test: no laps, times or place - the speed, the weapon and fps
+        if race.settings.playground
+        {
+            self.draw_speed(&mut painter, race.viewed_index(), racer.speed, race.settings.kmh);
+            painter.sprite(1, Anchor::Left, [16.0, 56.0, 64.0, 64.0], WEAPON_FRAME_UV, alpha(FRAME_ALPHA));
+            if let Some(hand) = weapons.and_then(|weapons| weapons.hand(race.viewed_index())) { painter.weapon(hand); }
+            if self.show_fps && !race.multi()
+            {
+                painter.text(Anchor::Left, 16.0, 392.0, 8.0, 12.0, CYAN, "fps");
+                painter.text(Anchor::Left, 16.0, 404.0, 8.0, 12.0, WHITE, &fps.to_string());
+            }
+            painter.version(&self.version);
+            self.overlays(&mut painter, rect);
             painter.finish_all(ui.ctx());
             return;
         }
@@ -244,12 +273,18 @@ impl Hud
         painter.version(&self.version);
         let countdown = painter.countdown(race, &textures.countdown, self.mirrored);
         painter.meshes.push(countdown);
+        self.overlays(&mut painter, rect);
         painter.finish_all(ui.ctx());
     }
 
     // the HUD of one racer in the rect of the painter: lap, weapon, times, wrong way, sign, place, arrow, speed, the cars around - fps if given
     fn draw_racer(&self, painter: &mut Painter, race: &Race, index: usize, weapons: Option<&Weapons>, fps: Option<u32>)
     {
+        if race.battle.is_some()
+        {
+            self.draw_battle(painter, race, index, weapons, fps);
+            return;
+        }
         let racer = &race.racers[index];
         // top left: lap, weapon frame
         painter.text(Anchor::Left, 16.0, 16.0, 8.0, 16.0, CYAN, "Lap");
@@ -292,7 +327,7 @@ impl Hud
         // bottom left: position, direction arrow, fps
         let position = racer.position;
         painter.text(Anchor::Left, 16.0, 392.0, 12.0, 24.0, WHITE, &position.to_string());
-        painter.text(Anchor::Left, if position < 10 { 40.0 } else { 28.0 }, 392.0, 8.0, 12.0, CYAN, suffix(position));
+        painter.text(Anchor::Left, 28.0 + position.to_string().len() as f32 * 12.0, 392.0, 8.0, 12.0, CYAN, suffix(position));
         painter.arrow([96.0, 396.0], 32.0, racer.arrow, alpha(SPRITE_ALPHA));
         if let Some(fps) = fps
         {
@@ -318,7 +353,63 @@ impl Hud
         }
     }
 
-    // the scale of the exe's speedometer, in km/h or mph
+    // battle tag (own layout, the game shows the own clock and the holder with his clock): top left the own clock and the weapon,
+    // top right who has the star, a star top center while this car has it, bottom left the place, bottom right the speed
+    fn draw_battle(&self, painter: &mut Painter, race: &Race, index: usize, weapons: Option<&Weapons>, fps: Option<u32>)
+    {
+        let Some(battle) = &race.battle else { return; };
+        let racer = &race.racers[index];
+        let holding = battle.holder == Some(index);
+        painter.text(Anchor::Left, 16.0, 16.0, 8.0, 16.0, CYAN, "Time");
+        painter.text(Anchor::Left, 16.0, 32.0, 8.0, 16.0, if holding { AMMO } else { WHITE }, &format_time(battle.clock(index)));
+        painter.sprite(1, Anchor::Left, [16.0, 56.0, 64.0, 64.0], WEAPON_FRAME_UV, alpha(FRAME_ALPHA));
+        if let Some(hand) = weapons.and_then(|weapons| weapons.hand(index)) { painter.weapon(hand); }
+        if race.multi()
+        {
+            painter.text(Anchor::Left, 16.0, 128.0, 8.0, 16.0, AMMO, &racer.name.chars().take(16).collect::<String>());
+        }
+
+        // who has the star and his clock
+        let label = "Star";
+        painter.text(Anchor::Right, 624.0 - label.len() as f32 * 8.0, 16.0, 8.0, 16.0, CYAN, label);
+        match battle.holder
+        {
+            Some(holder) =>
+            {
+                let name: String = race.racers[holder].name.chars().take(16).collect();
+                painter.text(Anchor::Right, 624.0 - name.len() as f32 * 8.0, 32.0, 8.0, 16.0, if holding { AMMO } else { HOLDER }, &name);
+                painter.text(Anchor::Right, 552.0, 48.0, 8.0, 16.0, WHITE, &format_time(battle.clock(holder)));
+            },
+            None => painter.text(Anchor::Right, 624.0 - 8.0 * 8.0, 32.0, 8.0, 16.0, WHITE, "nobody"),
+        }
+
+        // the own star, pulsing - else an arrow to the holder (red) or the nearest star (gold) with the distance in m of the game
+        if holding && !racer.finished()
+        {
+            let pulse = 1.0 + 0.12 * (self.clock * 6.0).sin() as f32;
+            let [inner, outer, rim] = STAR_COLORS;
+            painter.star(Anchor::Center, [320.0, 44.0], 22.0 * pulse, inner, outer, rim);
+        }
+        else if let Some((turn, metres)) = battle.pointer(index, &race.racers).filter(|_| !race.over)
+        {
+            let color = if battle.holder.is_some() { Color32::from_rgba_unmultiplied(255, 72, 40, SPRITE_ALPHA) } else { Color32::from_rgba_unmultiplied(255, 200, 40, SPRITE_ALPHA) };
+            painter.arrow([320.0, 44.0], 32.0, turn, color);
+            let text = format!("{}m", (metres * BATTLE_METRES) as i32);
+            painter.text(Anchor::Center, 320.0 - text.len() as f32 * 4.0, 84.0, 8.0, 16.0, WHITE, &text);
+        }
+
+        let position = racer.position;
+        painter.text(Anchor::Left, 16.0, 392.0, 12.0, 24.0, WHITE, &position.to_string());
+        painter.text(Anchor::Left, 28.0 + position.to_string().len() as f32 * 12.0, 392.0, 8.0, 12.0, CYAN, suffix(position));
+        if let Some(fps) = fps
+        {
+            painter.text(Anchor::Left, 144.0, 392.0, 8.0, 12.0, CYAN, "fps");
+            painter.text(Anchor::Left, 144.0, 404.0, 8.0, 12.0, WHITE, &fps.to_string());
+        }
+        self.draw_speed(painter, index, racer.speed, race.settings.kmh);
+    }
+
+    // the scale of the game's speedometer, in km/h or mph
     fn draw_speed(&self, painter: &mut Painter, index: usize, speed: f32, kmh: bool)
     {
         let dots = self.dots.get(index).copied().unwrap_or_default();
@@ -548,7 +639,7 @@ impl Painter
         }
     }
 
-    // the arrow of fxpage2 turned about its center, a square of half diagonal `radius` like the exe
+    // the arrow of fxpage2 turned about its center, a square of half diagonal `radius` like the game
     fn arrow(&mut self, [cx, cy]: [f32; 2], radius: f32, turn: f32, color: Color32)
     {
         let [u, v, w, h] = ARROW_UV;
@@ -591,10 +682,12 @@ impl Painter
         }
     }
 
-    // 3, 2, 1, GO: the exe counts t = countdown + 1 s down to 1 s at GO, then 1 s - race time down to 0; the model of t / 1 s
+    // 3, 2, 1, GO: the game counts t = countdown + 1 s down to 1 s at GO, then 1 s - race time down to 0; the model of t / 1 s
     fn countdown(&self, race: &Race, models: &[Vec<[(Vector3<f32>, Color32); 3]>; 4], mirrored: bool) -> Mesh
     {
         let mut mesh = Mesh::default();
+        // the power up test has no countdown, not even the GO
+        if race.settings.playground { return mesh; }
         let ms = match race.countdown > 0.0
         {
             true if race.countdown < 3.0 => (race.countdown * 1000.0 + 1000.0) as f32,
@@ -642,43 +735,54 @@ impl Painter
     }
 
     // the label of a viewport in the split view: place, name, lap - big enough for a small cell
-    fn split_label(&mut self, racer: &Racer, laps: u32)
+    fn split_label(&mut self, racer: &Racer, laps: u32, clock: Option<f64>)
     {
         let color = if racer.is_local() { AMMO } else { WHITE };
         self.text(Anchor::Left, 16.0, 16.0, 16.0, 32.0, WHITE, &racer.position.to_string());
         self.text(Anchor::Left, if racer.position < 10 { 32.0 } else { 48.0 }, 16.0, 12.0, 20.0, CYAN, suffix(racer.position));
         self.text(Anchor::Left, 80.0, 16.0, 16.0, 32.0, color, &racer.name.chars().take(18).collect::<String>());
-        let lap = match racer.finish_time { Some(time) => format_time(time), None => format!("Lap {}/{}", (racer.laps + 1).min(laps), laps) };
+        let lap = match (clock, racer.finish_time) { (Some(clock), _) => format_time(clock), (None, Some(time)) => format_time(time), (None, None) => format!("Lap {}/{}", (racer.laps + 1).min(laps), laps) };
         self.text(Anchor::Left, 80.0, 52.0, 12.0, 24.0, CYAN, &lap);
     }
 
     // every car with its place and race time, centered; the ones still driving without a time
     fn results(&mut self, race: &Race, hint: bool)
     {
-        let mut racers: Vec<&Racer> = race.racers.iter().collect();
-        racers.sort_by_key(|racer| racer.position);
-        let (row, top) = (20.0, 120.0);
-        self.blue_box(Anchor::Center, [150.0, top - 16.0, 340.0, 40.0 + row * racers.len() as f32 + 24.0]);
+        let mut order: Vec<usize> = (0..race.racers.len()).collect();
+        order.sort_by_key(|&index| race.racers[index].position);
+        let racers: Vec<&Racer> = order.iter().map(|&index| &race.racers[index]).collect();
+        // more than 15 cars (Clockwork Carnage: 30) in two columns
+        let per_column = racers.len().clamp(1, 15);
+        let columns = racers.len().div_ceil(per_column).max(1);
+        let column_width = if columns == 1 { 340.0 } else { 300.0 };
+        let left = 320.0 - columns as f32 * column_width * 0.5;
+        let (row, top) = (20.0, if columns == 1 { 120.0 } else { 70.0 });
+        self.blue_box(Anchor::Center, [left, top - 16.0, columns as f32 * column_width, 40.0 + row * per_column as f32 + 24.0]);
         self.text(Anchor::Center, 320.0 - 7.0 * 12.0 * 0.5, top, 12.0, 24.0, CYAN, "Results");
         for (i, racer) in racers.iter().enumerate()
         {
-            let y = top + 36.0 + i as f32 * row;
+            let x = left + (i / per_column) as f32 * column_width;
+            let y = top + 36.0 + (i % per_column) as f32 * row;
             let color = if racer.is_local() { AMMO } else { WHITE };
-            self.text(Anchor::Center, 166.0, y, 8.0, 16.0, CYAN, &format!("{}{}", racer.position, suffix(racer.position)));
-            self.text(Anchor::Center, 214.0, y, 8.0, 16.0, color, &racer.name.chars().take(16).collect::<String>());
-            let time = racer.finish_time.map_or_else(|| "--:--:---".to_string(), format_time);
-            self.text(Anchor::Center, 394.0, y, 8.0, 16.0, color, &time);
+            self.text(Anchor::Center, x + 16.0, y, 8.0, 16.0, CYAN, &format!("{}{}", racer.position, suffix(racer.position)));
+            self.text(Anchor::Center, x + 64.0, y, 8.0, 16.0, color, &racer.name.chars().take(16).collect::<String>());
+            let time = match &race.battle
+            {
+                Some(battle) => format_time(battle.clock(order[i])),
+                None => racer.finish_time.map_or_else(|| "--:--:---".to_string(), format_time),
+            };
+            self.text(Anchor::Center, x + column_width - 96.0, y, 8.0, 16.0, color, &time);
         }
         // below the panel
         if hint
         {
-            let y = top + 48.0 + racers.len() as f32 * row + 16.0;
+            let y = top + 48.0 + per_column as f32 * row + 16.0;
             let text = "Enter: menu";
             self.text(Anchor::Center, 320.0 - text.len() as f32 * 8.0 * 0.5, y, 8.0, 16.0, CYAN, text);
         }
     }
 
-    // the weapon icon in the frame, added like the exe (black is nothing); while it spins two icons fade into each other at half brightness
+    // the weapon icon in the frame, added like the game (black is nothing); while it spins two icons fade into each other at half brightness
     fn weapon(&mut self, hand: &Hand)
     {
         let icon = |painter: &mut Self, index: usize, gray: f32|
@@ -729,4 +833,55 @@ pub fn suffix(position: u32) -> &'static str
         3 => "rd",
         _ => "th",
     }
+}
+
+impl Hud
+{
+    // the reticles of the fireworks (a ring with four ticks, turning and pulsing; green the own target, red the own car aimed at), the bluish flash of the global pulse and the white of the lightning
+    fn overlays(&self, painter: &mut Painter, rect: Rect)
+    {
+        let scale = rect.height() / HEIGHT;
+        let clock = self.clock as f32;
+        for ([x, y], red) in &self.reticles
+        {
+            let center = rect.min + egui::vec2(x * rect.width(), y * rect.height());
+            if !rect.contains(center) { continue; }
+            let color = if *red { Color32::from_rgba_unmultiplied(255, 60, 50, 230) } else { Color32::from_rgba_unmultiplied(90, 255, 80, 230) };
+            let stroke = egui::Stroke::new(1.5 * scale, color);
+            let radius = 8.0 * scale * (1.0 + 0.1 * (clock * 8.0).sin());
+            let turn = clock * if *red { -4.0 } else { 3.0 };
+            painter.shapes.push(egui::Shape::circle_stroke(center, radius, stroke));
+            for quarter in 0..4
+            {
+                let angle = turn + quarter as f32 * std::f32::consts::FRAC_PI_2;
+                let direction = egui::vec2(angle.cos(), angle.sin());
+                painter.shapes.push(egui::Shape::line_segment([center + direction * radius * 0.5, center + direction * radius * 1.5], stroke));
+            }
+        }
+        if self.flash > 0.0
+        {
+            let alpha = (self.flash.min(1.0) * 170.0) as u8;
+            painter.shapes.push(egui::Shape::rect_filled(rect, 0.0, Color32::from_rgba_unmultiplied(170, 200, 255, alpha)));
+        }
+        if self.lightning > 0.0
+        {
+            let alpha = (self.lightning.min(1.0) * 150.0) as u8;
+            painter.shapes.push(egui::Shape::rect_filled(rect, 0.0, Color32::from_rgba_unmultiplied(235, 240, 255, alpha)));
+        }
+    }
+}
+
+// the message in the middle, each line of it centered
+fn message(painter: &mut Painter, text: &str, y: f32)
+{
+    for (i, line) in text.lines().enumerate()
+    {
+        painter.text(Anchor::Center, 320.0 - line.len() as f32 * 8.0, y + i as f32 * 28.0, 16.0, 24.0, WHITE, line);
+    }
+}
+
+// the message in the middle - in battle below the arrow and its distance
+fn message_y(race: &Race) -> f32
+{
+    if race.battle.is_some() { 112.0 } else { 80.0 }
 }

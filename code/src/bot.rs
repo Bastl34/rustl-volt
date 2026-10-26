@@ -79,6 +79,8 @@ const WANDER_TIME: [f32; 2] = [1.5, 5.0];
 const WANDER_RATE: f32 = 0.08;
 // and changes its pace a bit now and then
 const PACE_JITTER: f32 = 0.04;
+// battle tag: share of the speed taken away for a point straight behind (half of it at 90°)
+const ARENA_TURN_SLOWDOWN: f32 = 0.6;
 
 // what a bot sees of its car
 pub struct BotView
@@ -169,13 +171,7 @@ impl Bot
         self.update_wander(dt);
         let line = self.line_ahead(track, place, view.position, LOOK_MAX.max(view.speed * view.speed / (2.0 * BRAKE_DECEL) + SPEED_LOOK_EXTRA));
 
-        // steering: the point at the look ahead distance, the wheel angle of a circle through it
-        let look = (LOOK_MIN + view.speed.max(0.0) * LOOK_TIME).min(LOOK_MAX);
-        let target = point_at(&line, look);
-        let to_target = target - view.position;
-        let alpha = to_target.dot(&-view.right).atan2(to_target.dot(&view.forward));
-        let wheel_angle = (2.0 * view.wheelbase * alpha.sin() / look.max(0.1)).atan();
-        let mut steer = (wheel_angle / view.max_steer.max(0.1)).clamp(-1.0, 1.0);
+        let mut steer = steer_along(view, &line);
 
         // speed: the slowest the curves ahead allow, minus what braking until there takes away
         let pace = self.pace + self.pace_jitter;
@@ -231,6 +227,58 @@ impl Bot
         BotAction::Drive(drive)
     }
 
+    // battle tag (no track): straight at a point - slower the sharper the turn, full lock for a point behind, the reverse when stuck, the recover of the engine on the roof
+    pub fn drive_to(&mut self, view: &BotView, target: Vector3<f32>, dt: f32) -> BotAction
+    {
+        self.update_wander(dt);
+        let to_target = target - view.position;
+        let distance = flat(to_target).norm();
+        let alpha = to_target.dot(&-view.right).atan2(to_target.dot(&view.forward));
+        let look = distance.max(LOOK_MIN);
+        let wheel_angle = (2.0 * view.wheelbase * alpha.sin() / look).atan();
+        let mut steer = if alpha.abs() > std::f32::consts::FRAC_PI_2 { alpha.signum() } else { (wheel_angle / view.max_steer.max(0.1)).clamp(-1.0, 1.0) };
+
+        let pace = self.pace + self.pace_jitter;
+        let turn = (alpha.abs() / std::f32::consts::PI).min(1.0);
+        let target_speed = view.top_speed * pace * TOP_SPEED_MARGIN * (1.0 - ARENA_TURN_SLOWDOWN * turn);
+        let mut drive = VehicleDriveInput::default();
+        let error = target_speed - view.speed;
+        if error > SPEED_BAND { drive.throttle = 1.0; }
+        else if error < -SPEED_BAND { drive.brake = (-error / 4.0).clamp(0.2, 1.0); }
+
+        // on the side or the roof for a while: the recover of the engine puts it back on its wheels
+        self.lost_time = if view.up.y < UPRIGHT { self.lost_time + dt } else { 0.0 };
+        if self.lost_time > LOST_TIME
+        {
+            self.lost_time = 0.0;
+            drive.recover = true;
+        }
+
+        if self.reverse_time > 0.0
+        {
+            self.reverse_time -= dt;
+            drive.throttle = 0.0;
+            drive.brake = 1.0;
+            steer = -steer;
+        }
+        else if drive.throttle > 0.0 && view.speed.abs() < STUCK_SPEED
+        {
+            self.stuck_time += dt;
+            if self.stuck_time > STUCK_TIME
+            {
+                self.stuck_time = 0.0;
+                self.reverse_time = REVERSE_TIME;
+            }
+        }
+        else if view.speed > STUCK_SPEED * 3.0
+        {
+            self.stuck_time = 0.0;
+        }
+
+        drive.steer = steer;
+        BotAction::Drive(drive)
+    }
+
     // a new aim beside the line now and then, moved to slowly - no two laps the same
     fn update_wander(&mut self, dt: f32)
     {
@@ -268,30 +316,45 @@ impl Bot
         Some(self.reset(track, place, "no progress"))
     }
 
-    // the racing line from the car on: points and their distance along it
     fn line_ahead(&self, track: &Track, place: AiPlace, position: Vector3<f32>, length: f32) -> Vec<(Vector3<f32>, f32)>
     {
-        let offset = self.offset + self.wander;
-        let start = track.racing_point(place.node, offset).lerp(&track.racing_point(place.next, offset), place.t);
-        let mut points = vec![(position, 0.0), (start, 0.0)];
-        let mut distance = (start - position).norm();
-        points[1].1 = distance;
-
-        let mut node = place.next;
-        let mut last = start;
-        for _ in 0..64
-        {
-            let point = track.racing_point(node, offset);
-            distance += (point - last).norm();
-            points.push((point, distance));
-            last = point;
-            if distance > length { break; }
-            let next = &track.ai[node].next;
-            if next.is_empty() { break; }
-            node = next[(self.fork + node) % next.len()];
-        }
-        points
+        line_ahead(track, place, position, length, self.offset + self.wander, self.fork)
     }
+}
+
+// the racing line (moved sideways by offset) from the car on: points and their distance along it, forks picked by fork
+pub fn line_ahead(track: &Track, place: AiPlace, position: Vector3<f32>, length: f32, offset: f32, fork: usize) -> Vec<(Vector3<f32>, f32)>
+{
+    let start = track.racing_point(place.node, offset).lerp(&track.racing_point(place.next, offset), place.t);
+    let mut points = vec![(position, 0.0), (start, 0.0)];
+    let mut distance = (start - position).norm();
+    points[1].1 = distance;
+
+    let mut node = place.next;
+    let mut last = start;
+    for _ in 0..64
+    {
+        let point = track.racing_point(node, offset);
+        distance += (point - last).norm();
+        points.push((point, distance));
+        last = point;
+        if distance > length { break; }
+        let next = &track.ai[node].next;
+        if next.is_empty() { break; }
+        node = next[(fork + node) % next.len()];
+    }
+    points
+}
+
+// the steering (-1..1) towards the point at the look ahead distance on the line: the wheel angle of a circle through it
+pub fn steer_along(view: &BotView, line: &[(Vector3<f32>, f32)]) -> f32
+{
+    let look = (LOOK_MIN + view.speed.max(0.0) * LOOK_TIME).min(LOOK_MAX);
+    let target = point_at(line, look);
+    let to_target = target - view.position;
+    let alpha = to_target.dot(&-view.right).atan2(to_target.dot(&view.forward));
+    let wheel_angle = (2.0 * view.wheelbase * alpha.sin() / look.max(0.1)).atan();
+    (wheel_angle / view.max_steer.max(0.1)).clamp(-1.0, 1.0)
 }
 
 // a car put back onto the track: the racing line of the node ahead, facing to the one after it

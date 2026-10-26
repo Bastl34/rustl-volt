@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use super::geometry::{linear_rgba, to_gltf, MeshWriter};
 use super::texture::{load_extra_pages, load_pages};
 use super::collision::{self, CollisionStats};
-use super::{bodies, clouds, effects, frontend, instances, lights, mirror, objects, scene, skybox, sounds, start_car, track, Log, Settings};
+use super::{bodies, clouds, effects, frontend, instances, lights, mirror, objects, playground, scene, skybox, sounds, start_car, track, Log, Settings};
 use crate::glb::Glb;
 use crate::revolt::{find_file, MIRRORED, REVERSED};
 
@@ -83,12 +83,7 @@ pub fn convert(settings: &Settings, id: &str, log: &Log, progress: &dyn Fn(f32))
     log_world(&world, settings.scale, log);
 
     log.step("2b  Lights (.lit --> added to the vertex colors like the game does at load)");
-    // only the frontend for now - in the race levels the baked lights outshone the pickups
-    match frontend::is_frontend(level)
-    {
-        true => lights::bake(&mut world, &mut level_instances, &mut level_objects, &level_lights, log),
-        false => log.info(format!("  {} lights - not baked (only in the frontend for now)", level_lights.len())),
-    }
+    lights::bake(&mut world, &mut level_instances, &mut level_objects, &level_lights, log);
 
     log.step("3  Textures (.bmp --> png in the glbs)");
     let polygon_pages = world.meshes.iter().flat_map(|m| &m.mesh.polygons).filter(|p| !p.has(FACE_TEXANIM)).map(|p| p.texture as i32);
@@ -174,6 +169,9 @@ pub fn convert(settings: &Settings, id: &str, log: &Log, progress: &dyn Fn(f32))
     log.step("7  Level info (.inf --> glb extras on the root node)");
     let mut extras = level_extras(level, settings.scale, inf.as_ref(), log);
     if mirrored { mirror::level_extras(&mut extras); }
+    // the lights the game keeps while racing - they light the cars (app car_light.rs)
+    extras["revolt_lights"] = json!(lights::runtime_json(&level_lights, settings.scale).to_string());
+    log.info(format!("  {} of {} lights kept for the cars (extras revolt_lights)", lights::runtime(&level_lights).len(), level_lights.len()));
     // start car and camera of the reversed scene: STARTPOSREV / STARTROTREV
     let start_extras = if reversed { reversed_start(&extras, log) } else { extras.clone() };
 
@@ -232,8 +230,17 @@ pub fn convert(settings: &Settings, id: &str, log: &Log, progress: &dyn Fn(f32))
         false => start_car::build(settings, level, &start_extras, level_ncp.as_ref(), log),
     };
 
+    // the arena once more for the power up test (own)
+    let playground_parts = (level.eq_ignore_ascii_case(playground::LEVEL) && !reversed && !mirrored).then(|| (instance_objects.clone(), game_objects.clone(), sky_object.clone(), car.clone(), track.clone()));
+
     log.step("15  Scene (.scene in the project folder)");
     scene::write(level, &scene_name, settings, &out, collision_glb.as_deref(), instance_objects, game_objects, sky_object.into_iter().collect(), car, &start_extras, track, log)?;
+
+    if let Some((instances, objects, sky, car, track)) = playground_parts
+    {
+        log.step(format!("16  Power up test ({}.scene: this arena once more)", playground::SCENE));
+        scene::write(level, playground::SCENE, settings, &out, collision_glb.as_deref(), instances, objects, sky.into_iter().collect(), car, &start_extras, track, log)?;
+    }
     Ok(out)
 }
 
@@ -372,7 +379,8 @@ fn level_extras(level: &str, scale: f32, inf: Option<&Inf>, log: &Log) -> Value
         let mut converted: Vec<(String, Value)> = vec![];
         let mut put = |key: &str, value: Value| converted.push((key.to_string(), value));
         let mut kept = false;
-        let n: Vec<f64> = value.split_whitespace().filter_map(|v| v.parse().ok()).collect();
+        // bot_bat writes STARTPOS with commas
+        let n: Vec<f64> = value.split(|c: char| c.is_whitespace() || c == ',').filter_map(|v| v.parse().ok()).collect();
         let position = |prefix: &str, put: &mut dyn FnMut(&str, Value)|
         {
             let p = to_gltf([n[0] as f32, n[1] as f32, n[2] as f32]);
@@ -444,6 +452,13 @@ fn level_extras(level: &str, scale: f32, inf: Option<&Inf>, log: &Log) -> Value
     {
         log.info(format!("  {:<14} {:<22} --> env_map \"gfx/envstill.png\"", "(no ENVSTILL)", ""));
         extras.insert("env_map".into(), json!("gfx/envstill.png"));
+    }
+    // the game plays no music without REDBOOK (only the Market Arena) - the range of the supermarket tracks
+    if !extras.contains_key("music_track_start")
+    {
+        log.info(format!("  {:<14} {:<22} --> music_track_start 4, music_track_end 9", "(no REDBOOK)", ""));
+        extras.insert("music_track_start".into(), json!(4));
+        extras.insert("music_track_end".into(), json!(9));
     }
     log.info(format!("  {} values on the root node", extras.len()));
     Value::Object(extras)

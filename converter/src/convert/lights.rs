@@ -5,12 +5,18 @@ use super::instances::{LevelInstances, Model};
 use super::objects::{LevelObjects, ObjectModel};
 use super::{bodies, motion, Log};
 use crate::revolt::fin::FIN_HIDE;
-use crate::revolt::lit::{Light, LIGHT_NO_MODELS, LIGHT_OMNI, LIGHT_OMNI_NORMAL, LIGHT_SPOT, LIGHT_SPOT_NORMAL, LIGHT_WORLD};
+use serde_json::{json, Value};
+
+use super::geometry::to_gltf;
+use crate::revolt::lit::{Light, LIGHT_KEPT, LIGHT_NO_MODELS, LIGHT_OMNI, LIGHT_OMNI_NORMAL, LIGHT_SPOT, LIGHT_SPOT_NORMAL, LIGHT_SQUARE_SHADOW, LIGHT_WORLD};
 use crate::revolt::mesh::Mesh;
 use crate::revolt::world::World;
 
 // instance flag: not lit by the lights
 const FIN_NO_LIGHTS: u8 = 8;
+// object types
+const PICKUP: i32 = 30;
+const STAR: i32 = 50;
 
 // a mesh in the level: its origin and its axes (rows right, up, look) - the world has none
 #[derive(Clone, Copy)]
@@ -39,7 +45,26 @@ impl Placement
 
 pub fn world_lights(lights: &[Light]) -> Vec<&Light>
 {
-    lights.iter().filter(|light| light.flag & LIGHT_WORLD != 0).collect()
+    lights.iter().filter(|light| light.flag & LIGHT_WORLD != 0 && light.kind <= LIGHT_SPOT_NORMAL).collect()
+}
+
+// the lights the game keeps after the load: the kept ones, square shadows always (their "no models" flag is cleared)
+pub fn runtime(lights: &[Light]) -> Vec<&Light>
+{
+    lights.iter().filter(|light| light.flag & LIGHT_KEPT != 0 && (light.kind == LIGHT_SQUARE_SHADOW || light.kind <= LIGHT_SPOT_NORMAL && light.flag & LIGHT_NO_MODELS == 0)).collect()
+}
+
+// glTF space in m: kind, position, reach, axes (rows right, up, look), cone in degrees, color 0..255 and more - a square shadow has its half size (m) along the axes instead
+pub fn runtime_json(lights: &[Light], scale: f32) -> Value
+{
+    let scaled = |v: [f32; 3]| to_gltf(v).map(|c| c * scale);
+    let list: Vec<Value> = runtime(lights).iter().map(|light|
+    {
+        let mut entry = json!({ "kind": light.kind, "position": scaled(light.position), "reach": light.reach * scale, "axes": light.axes.map(to_gltf), "cone": light.cone });
+        if light.kind == LIGHT_SQUARE_SHADOW { entry["half_size"] = json!(light.color.map(|c| c * scale)); } else { entry["color"] = json!(light.color); }
+        entry
+    }).collect();
+    Value::Array(list)
 }
 
 // the lights that reach a mesh placed there (bounding sphere test)
@@ -136,7 +161,7 @@ pub fn bake(world: &mut World, instances: &mut LevelInstances, objects: &mut Lev
     }
     for (i, light) in lights.iter().enumerate()
     {
-        let kind = match light.kind { LIGHT_OMNI => "omni", LIGHT_OMNI_NORMAL => "omni (normal)", LIGHT_SPOT => "spot", LIGHT_SPOT_NORMAL => "spot (normal)", _ => "unknown" };
+        let kind = match light.kind { LIGHT_OMNI => "omni", LIGHT_OMNI_NORMAL => "omni (normal)", LIGHT_SPOT => "spot", LIGHT_SPOT_NORMAL => "spot (normal)", LIGHT_SQUARE_SHADOW => "square shadow (not baked)", _ => "unknown" };
         log.info(format!("  light {i}: {kind} at ({:.0}, {:.0}, {:.0}), reach {:.0}, cone {:.0}°, color ({:.0}, {:.0}, {:.0}), flag {}, speed {}",
             light.position[0], light.position[1], light.position[2], light.reach, light.cone, light.color[0], light.color[1], light.color[2], light.flag, light.speed));
     }
@@ -150,8 +175,8 @@ pub fn bake(world: &mut World, instances: &mut LevelInstances, objects: &mut Lev
         if !near.is_empty() && apply(&mut world_mesh.mesh, &Placement::IDENTITY, &near) { world_meshes += 1; }
     }
 
-    // instances and objects: every light without the "no models" flag - a lit one gets a model of its own
-    let model_lights: Vec<&Light> = lights.iter().filter(|light| light.flag & LIGHT_NO_MODELS == 0).collect();
+    // instances and objects: every light without the "no models" flag - a lit one gets a model of its own (square shadows only darken moving models at runtime)
+    let model_lights: Vec<&Light> = lights.iter().filter(|light| light.flag & LIGHT_NO_MODELS == 0 && light.kind <= LIGHT_SPOT_NORMAL).collect();
     let mut lit_instances = 0;
     for (index, instance) in instances.instances.iter().enumerate()
     {
@@ -172,7 +197,8 @@ pub fn bake(world: &mut World, instances: &mut LevelInstances, objects: &mut Lev
     let mut lit_objects = 0;
     for (index, object) in objects.objects.iter().enumerate()
     {
-        if motion::moves(object.kind) || bodies::body(object.kind).is_some() { continue; }
+        // pickups and stars keep their own colors (lit they glowed)
+        if motion::moves(object.kind) || bodies::body(object.kind).is_some() || object.kind == PICKUP || object.kind == STAR { continue; }
         let Some(m) = objects.model_of[index] else { continue; };
         let (up, look) = (object.up, object.look);
         let right = [up[1] * look[2] - up[2] * look[1], up[2] * look[0] - up[0] * look[2], up[0] * look[1] - up[1] * look[0]];

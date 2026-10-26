@@ -1,4 +1,4 @@
-// models/go3.m, go2.m, go1.m, gogo.m - the 3D countdown of the exe - as triangles for the HUD of the app code
+// models/go3.m, go2.m, go1.m, gogo.m - the 3D countdown of the game - as triangles for the HUD of the app code
 // assets/models/countdown.json: per model a list of triangles, a corner = [x, y, z, r, g, b] in game units (y down, clockwise), sRGB colors
 
 use anyhow::{Context, Result};

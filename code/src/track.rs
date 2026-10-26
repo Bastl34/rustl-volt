@@ -70,6 +70,8 @@ pub struct Track
     pub start: usize,
     pub length: f32,
     pub signs: Vec<Sign>,
+    // the object thrower triggers, id = the ID of the thrower they set off
+    pub throws: Vec<Zone>,
     pub ai: Vec<AiNode>,
 }
 
@@ -81,7 +83,22 @@ impl Track
         let level = find_node(&scene.nodes, &|node| node.tags.contains("revolt_level") && node.extras.contains("revolt_track_zones"))?;
         let level = level.read().unwrap();
         let json = |key: &str| level.extras.get::<String>(key).and_then(|text| serde_json::from_str::<Value>(text).ok());
-        Self::parse(&json("revolt_track_zones")?, &json("revolt_track_path")?, json("revolt_track_signs").as_ref(), json("revolt_ai_nodes").as_ref())
+        Self::parse(&json("revolt_track_zones")?, &json("revolt_track_path")?, json("revolt_track_signs").as_ref(), json("revolt_ai_nodes").as_ref(), json("revolt_track_throws").as_ref())
+    }
+
+    // a battle arena: no zones, no path, no AI nodes
+    pub fn arena() -> Self
+    {
+        Self { zones: vec![], zone_ids: 1, nodes: vec![], start: 0, length: 1.0, signs: vec![], ai: vec![], throws: vec![] }
+    }
+
+    // NAME of the .inf of a scene that is not loaded, from the root extras of its level glb
+    pub fn level_name_from_file(scene: &Scene) -> Option<String>
+    {
+        let path = scene.source.as_ref()?.origin_path.clone();
+        let file = rustl::state::project::loader::load_editor_scene(&path)?;
+        let level = find_object(&file.objects, &|object| object.tags.iter().any(|tag| tag == "revolt_level"))?;
+        level.source.as_ref().and_then(|source| glb_root_name(&rustl::helper::file::resolve_relative_path(&path, source)))
     }
 
     // the same for a scene that is not loaded: from its file - with the level name (NAME of the .inf) from the root extras of its glb
@@ -91,14 +108,15 @@ impl Track
         let file = rustl::state::project::loader::load_editor_scene(&path)?;
         let level = find_object(&file.objects, &|object| object.tags.iter().any(|tag| tag == "revolt_level") && object.extras.contains_key("revolt_track_zones"))?;
         let json = |key: &str| level.extras.get(key).and_then(|value| value.as_str()).and_then(|text| serde_json::from_str::<Value>(text).ok());
-        let track = Self::parse(&json("revolt_track_zones")?, &json("revolt_track_path")?, json("revolt_track_signs").as_ref(), json("revolt_ai_nodes").as_ref())?;
+        let track = Self::parse(&json("revolt_track_zones")?, &json("revolt_track_path")?, json("revolt_track_signs").as_ref(), json("revolt_ai_nodes").as_ref(), json("revolt_track_throws").as_ref())?;
         let name = level.source.as_ref().and_then(|source| glb_root_name(&rustl::helper::file::resolve_relative_path(&path, source)));
         Some((track, name))
     }
 
-    fn parse(zones: &Value, path: &Value, signs: Option<&Value>, ai: Option<&Value>) -> Option<Self>
+    fn parse(zones: &Value, path: &Value, signs: Option<&Value>, ai: Option<&Value>, throws: Option<&Value>) -> Option<Self>
     {
         let zones: Vec<Zone> = zones.as_array()?.iter().filter_map(zone).collect();
+        let throws: Vec<Zone> = throws.and_then(|throws| throws.as_array()).into_iter().flatten().filter_map(zone).collect();
         let signs: Vec<Sign> = signs.and_then(|signs| signs.as_array()).into_iter().flatten().filter_map(|sign| Some(Sign
         {
             order: sign["order"].as_i64()? as i32,
@@ -127,7 +145,7 @@ impl Track
 
         let zone_ids = zones.iter().map(|zone| zone.id).max().unwrap_or(0) + 1;
         let start = (path["start"].as_u64()? as usize).min(nodes.len() - 1);
-        Some(Self { zones, zone_ids, nodes, start, length: path["length"].as_f64()? as f32, signs, ai })
+        Some(Self { zones, zone_ids, nodes, start, length: path["length"].as_f64()? as f32, signs, ai, throws })
     }
 
     // in one of the boxes of the zone

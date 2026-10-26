@@ -11,6 +11,7 @@ use rustl::state::scene::components::sound::{Sound, SoundType};
 use rustl::state::scene::components::transformation::TransformationData;
 
 use crate::object_type::ObjectType;
+use crate::particles::{Kind, Particles};
 
 // the game casts 10000 units ahead
 const REACH: f32 = 100.0;
@@ -25,6 +26,10 @@ const SOUND_DISTANCE: f32 = 6.0;
 // the beam is red and glows: tint of its texture and emission (HDR, bloom) - green / blue low or the bloom turns it pink-white
 const TINT: Vector3<f32> = Vector3::new(1.0, 0.12, 0.08);
 const GLOW: Vector3<f32> = Vector3::new(1.6, 0.02, 0.01);
+// sparks where something blocks the beam, thrown back along it: per s, m/s, spread
+const SPARK_RATE: f32 = 60.0;
+const SPARK_BACK: f32 = 2.0;
+const SPARK_SPREAD: f32 = 2.0;
 
 struct Laser
 {
@@ -85,7 +90,7 @@ impl Lasers
         }
     }
 
-    pub fn update(&mut self, state: &State, dt: f32)
+    pub fn update(&mut self, state: &State, particles: &mut Particles, dt: f32)
     {
         self.time += dt;
         for laser in &mut self.lasers
@@ -108,9 +113,11 @@ impl Lasers
             }
             let length = laser.length.unwrap_or(REACH);
             let blocked = laser.blocks.then(|| cast(scene, origin, direction, length, QueryFilter::exclude_fixed())).flatten();
-            if blocked.is_some()
+            if let Some(distance) = blocked
             {
                 laser.alarm = ALARM_TIME;
+                let count = if scene.active { particles.due(SPARK_RATE, dt) } else { 0 };
+                particles.burst(scene.id, Kind::Spark, count, origin + direction * distance, -direction * SPARK_BACK, SPARK_SPREAD);
             }
             else
             {

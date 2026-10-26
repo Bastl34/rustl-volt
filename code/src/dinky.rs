@@ -48,7 +48,7 @@ impl Dinkies
         for (i, (car, [x, _, z])) in DINKIES.iter().enumerate()
         {
             let slot = Slot { floor: Vector3::new(x * 0.01, TABLE_TOP, -z * 0.01), heading: -Vector3::z() };
-            match field::spawn_extra(state, scene_id, assets, car, &format!("dinky{}", i + 1), slot)
+            match field::spawn_extra(state, scene_id, assets, car, &format!("dinky{}", i + 1), slot, Some("clockwrk"))
             {
                 Ok(opponent) => cars.push(Dinky { opponent, slot, steer: 0.0, throttle: 0.0, timer: 0.0, lost: 0.0 }),
                 Err(error) => { console_warning!("dinky: {} - {}", car, error); },

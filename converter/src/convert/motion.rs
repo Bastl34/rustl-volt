@@ -1,5 +1,5 @@
 // the scripted motion of the .fob objects (formats/README.md, Object motion) as glTF animations - one glb per moving object
-// the motion is computed like the exe in game space (rows = local axes, turns) and written as looping keyframes; the copter flies in the app code, its glb only turns the rotors
+// the motion is computed like the game in game space (rows = local axes, turns) and written as looping keyframes; the copter flies in the app code, its glb only turns the rotors
 
 use std::collections::BTreeMap;
 
@@ -189,7 +189,7 @@ impl Tree
     }
 }
 
-// propellers, rotors and heads turn inside their object - the wheels of the train collide (in the exe train.ncp covers them);
+// propellers, rotors and heads turn inside their object - the wheels of the train collide (in the game train.ncp covers them);
 // the spinning barrel is a tunnel without a hull in the game - its convex hull was an invisible wall
 fn collides(name: &str) -> bool
 {
@@ -233,7 +233,7 @@ fn spin(turns_per_second: f32, axis: fn(f32) -> Mat) -> Option<Track>
     Some(rotation_track(duration, TURN_KEYS, move |t| axis(turns_per_second * t)))
 }
 
-// a phase from the object index - the exe takes rand(), a glb loop needs a fixed one
+// a phase from the object index - the game takes rand(), a glb loop needs a fixed one
 fn phase(index: usize) -> f32
 {
     (index as f32 * 0.618034).fract()
@@ -392,7 +392,7 @@ pub fn write(glb: &mut Glb, writer: &mut MeshWriter, objects: &[Object], index: 
         },
         8 =>
         {
-            // the exe takes random periods (rock 4-6 s, bob 2-3 s) - here ones that fit into one 24 s loop
+            // the game takes random periods (rock 4-6 s, bob 2-3 s) - here ones that fit into one 24 s loop
             let duration = 24.0;
             let (t1, t3, t2) = (duration / [4.0, 5.0, 6.0][index % 3], duration / [5.0, 6.0, 4.0][index % 3], duration / [8.0, 9.0, 10.0, 11.0, 12.0][index % 5]);
             let keys = times(duration, (duration * KEYS_PER_SECOND) as usize);
@@ -475,7 +475,7 @@ pub fn write(glb: &mut Glb, writer: &mut MeshWriter, objects: &[Object], index: 
         },
         40 =>
         {
-            // -0.2 turns/s and a ratchet - 11 ratchet cycles in the 5 s loop (the exe: 11.4)
+            // -0.2 turns/s and a ratchet - 11 ratchet cycles in the 5 s loop (the game: 11.4)
             let duration = 5.0;
             let ratchet = 11.0 * TAU / duration;
             extras.insert("revolt_ratchet".into(), json!(ratchet));

@@ -7,7 +7,7 @@ use rustl::resources::resources::load_binary;
 use rustl::serde_json::{self, Value};
 
 // the asset version of the converter this code expects - raise it together with converter::version::ASSET_VERSION
-pub const ASSET_VERSION: u64 = 14;
+pub const ASSET_VERSION: u64 = 33;
 const FILE: &str = "convert.json";
 
 pub struct AssetInfo

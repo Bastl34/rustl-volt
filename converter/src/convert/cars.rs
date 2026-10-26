@@ -22,6 +22,8 @@ use crate::revolt::parameters::{self, Block, Parameters};
 // WHEEL 0..3 - names the vehicle controller of the engine recognizes
 const WHEEL_NAMES: [&str; 4] = ["wheel_front_left", "wheel_front_right", "wheel_back_left", "wheel_back_right"];
 const SIDE_NAMES: [&str; 4] = ["front_left", "front_right", "back_left", "back_right"];
+// the aerial in this many pieces - the game draws 4 through its 3 spring points
+const AERIAL_SECTIONS: usize = 4;
 
 pub struct ConvertedCar
 {
@@ -265,32 +267,43 @@ pub fn convert(settings: &Settings, car: &str, log: &Log) -> Result<ConvertedCar
         }
     }
 
-    // aerial: the section model is 1 unit long along -y, stretched to Length, the top on its end - the game bends it in sections
+    // aerial: the section model is 1 unit long along -y - AERIAL_SECTIONS of them in a chain of joints (aerial_joint_N), the top on the last
+    // the game draws it bent in 4 pieces through 3 spring points, the app bends the joints
     if let Some(aerial) = params.block("AERIAL", None)
     {
         let length = aerial.float("Length").unwrap_or(0.0);
-        let mut parts = vec![];
+        let piece = length / AERIAL_SECTIONS as f32;
         // the aerial uvs are the same on every car page - on some (mite) they hit the black color key, the mask would cut it away
         writer.solid = true;
-        if let Some(mesh) = model_num(aerial, "SecModelNum").and_then(|n| mesh_of(n, false, &mut glb, &mut writer))
-        {
-            parts.push(glb.node(json!({ "name": "aerial_section", "mesh": mesh, "scale": [1.0, length, 1.0], "extras": { "rustl_collision": false } })));
-        }
-        if let Some(mesh) = model_num(aerial, "TopModelNum").and_then(|n| mesh_of(n, false, &mut glb, &mut writer))
-        {
-            parts.push(glb.node(json!({ "name": "aerial_top", "mesh": mesh, "translation": [0.0, length * scale, 0.0], "extras": { "rustl_collision": false } })));
-        }
+        let section = model_num(aerial, "SecModelNum").and_then(|n| mesh_of(n, false, &mut glb, &mut writer));
+        let top = model_num(aerial, "TopModelNum").and_then(|n| mesh_of(n, false, &mut glb, &mut writer));
         writer.solid = false;
-        if !parts.is_empty()
+        if section.is_some() || top.is_some()
         {
+            // built from the tip down: every joint holds its piece and the next joint
+            let mut next = top.map(|mesh| glb.node(json!({ "name": "aerial_top", "mesh": mesh, "translation": [0.0, piece * scale, 0.0], "extras": { "rustl_collision": false } })));
+            for index in (0..AERIAL_SECTIONS).rev()
+            {
+                let mut parts = vec![];
+                if let Some(mesh) = section
+                {
+                    parts.push(glb.node(json!({ "name": format!("aerial_section_{index}"), "mesh": mesh, "scale": [1.0, piece, 1.0], "extras": { "rustl_collision": false } })));
+                }
+                parts.extend(next.take());
+                let offset = if index == 0 { 0.0 } else { piece * scale };
+                next = Some(glb.node(json!({ "name": format!("aerial_joint_{index}"), "translation": [0.0, offset, 0.0], "children": parts })));
+            }
             let direction = to_gltf(aerial.vec3("Direction").unwrap_or([0.0, -1.0, 0.0]));
+            let mut extras = block_extras(aerial, "revolt_aerial_");
+            extras.insert("revolt_aerial_sections".into(), json!(AERIAL_SECTIONS));
             children.push(glb.node(json!({
                 "name": "aerial",
                 "translation": place(aerial.vec3("Offset").unwrap_or_default()),
                 "rotation": rotation_between([0.0, 1.0, 0.0], direction),
-                "children": parts,
+                "children": next.into_iter().collect::<Vec<_>>(),
+                "extras": extras,
             })));
-            lines.push(format!("  aerial      length {length}"));
+            lines.push(format!("  aerial      length {length}, {AERIAL_SECTIONS} sections"));
         }
     }
     lines.iter().for_each(|line| log.info(line.as_str()));
@@ -367,6 +380,61 @@ pub fn convert(settings: &Settings, car: &str, log: &Log) -> Result<ConvertedCar
     Ok(ConvertedCar { id, name, glb: out, ground, class })
 }
 
+// the floor of cars.scene like the editor grid (own): a light plane, thin lines every 0.25 m, thick ones every m - one tile of the texture per m, unlit
+const FLOOR_SIZE: f32 = 240.0;
+const FLOOR_TEXELS: u32 = 256;
+const FLOOR_COLOR: [u8; 3] = [222, 224, 236];
+const FLOOR_LINE: [u8; 3] = [40, 42, 50];
+// texels of the line half widths: the metre (on both edges of the tile) and the quarters
+const FLOOR_METRE_LINE: u32 = 4;
+const FLOOR_QUARTER_LINE: u32 = 1;
+
+fn write_floor(settings: &Settings, center: [f32; 2], log: &Log) -> Result<PathBuf>
+{
+    let size = FLOOR_TEXELS;
+    let quarter = size / 4;
+    let image = image::RgbImage::from_fn(size, size, |x, y|
+    {
+        let near = |v: u32, half: u32, step: u32| { let m = v % step; m < half || m >= step - half };
+        let line = near(x, FLOOR_METRE_LINE, size) || near(y, FLOOR_METRE_LINE, size) || near(x, FLOOR_QUARTER_LINE, quarter) || near(y, FLOOR_QUARTER_LINE, quarter);
+        image::Rgb(if line { FLOOR_LINE } else { FLOOR_COLOR })
+    });
+    let mut png = vec![];
+    image.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)?;
+
+    let mut glb = Glb::default();
+    let texture = glb.png_texture(&png, "showroom_floor.png");
+    glb.use_extension("KHR_materials_unlit");
+    let material = glb.material(json!({
+        "name": "showroom_floor",
+        "pbrMetallicRoughness": { "baseColorTexture": { "index": texture }, "metallicFactor": 0.0, "roughnessFactor": 1.0 },
+        "extensions": { "KHR_materials_unlit": {} },
+    }));
+    // y up, counter clockwise from above - the uvs are metres
+    let h = FLOOR_SIZE * 0.5;
+    let [cx, cz] = center;
+    let corners = [[cx - h, cz - h], [cx - h, cz + h], [cx + h, cz + h], [cx + h, cz - h]];
+    let positions: Vec<f32> = corners.iter().flat_map(|[x, z]| [*x, 0.0, *z]).collect();
+    let normals: Vec<f32> = (0..4).flat_map(|_| [0.0, 1.0, 0.0]).collect();
+    let uvs: Vec<f32> = corners.iter().flat_map(|[x, z]| [*x, *z]).collect();
+    let primitive = json!({
+        "attributes": { "POSITION": glb.floats(&positions, "VEC3", true), "NORMAL": glb.floats(&normals, "VEC3", false), "TEXCOORD_0": glb.floats(&uvs, "VEC2", false) },
+        "indices": glb.indices(&[0, 1, 2, 0, 2, 3]),
+        "material": material,
+    });
+    let mesh = glb.mesh("showroom_floor", vec![primitive]);
+    // the physics floor of the engine carries the cars - this one is only to look at (2 mm below, the editor grid is at 0)
+    let root = glb.node(json!({ "name": "showroom_floor", "mesh": mesh, "extras": { "rustl_collision": false, "rustl_camera_collision": false } }));
+    let path = settings.out_dir.join("cars").join("showroom_floor.glb");
+    std::fs::create_dir_all(path.parent().context("no cars folder")?)?;
+    glb.save(&path, &[root])?;
+    log.info(format!("  floor: {FLOOR_SIZE} m grid (lines every 0.25 m, thick every m)"));
+    log.write(&path);
+    Ok(path)
+}
+
+const FLOOR_UUID: &str = "revolt-cars-floor";
+
 // cars.scene: the converted cars in rows - cars of earlier runs stay, the ones of this run are replaced
 pub fn write_showroom(settings: &Settings, cars: &[ConvertedCar], log: &Log) -> Result<()>
 {
@@ -391,8 +459,8 @@ pub fn write_showroom(settings: &Settings, cars: &[ConvertedCar], log: &Log) -> 
     scene::put_gravity(scene_object, settings.scale, true, log);
 
     let old = match scene_object.remove("objects") { Some(Value::Array(a)) => a, _ => vec![] };
-    let ours = |o: &Value| o["uuid"].as_str().is_some_and(|u| u.starts_with("revolt-car-"));
-    let mut cars_by_id: BTreeMap<String, Value> = old.iter().filter(|o| ours(o)).filter_map(|o| Some((o["name"].as_str()?.to_string(), o.clone()))).collect();
+    let ours = |o: &Value| o["uuid"].as_str().is_some_and(|u| u.starts_with("revolt-car-") || u == FLOOR_UUID);
+    let mut cars_by_id: BTreeMap<String, Value> = old.iter().filter(|o| ours(o) && o["uuid"] != FLOOR_UUID).filter_map(|o| Some((o["name"].as_str()?.to_string(), o.clone()))).collect();
     let kept: Vec<Value> = old.into_iter().filter(|o| !ours(o)).collect();
 
     for car in cars
@@ -429,12 +497,27 @@ pub fn write_showroom(settings: &Settings, cars: &[ConvertedCar], log: &Log) -> 
         object["position"] = json!([(i % PER_ROW) as f32 * SPACING_X, ground, (i / PER_ROW) as f32 * SPACING_Z]);
         objects.push(object);
     }
+    // in front of the first row, looking along +z
+    let center = (PER_ROW.min(count).max(1) - 1) as f32 * SPACING_X / 2.0;
+    // the floor under the rows
+    let rows_middle = (count.max(1) - 1) / PER_ROW;
+    match write_floor(settings, [center, rows_middle as f32 * SPACING_Z * 0.5], log)
+    {
+        Ok(floor) => objects.push(json!({
+            "source": relative_path(&settings.project_dir, &floor),
+            "uuid": FLOOR_UUID,
+            "name": "showroom_floor",
+            "options": { "settings": { "collision": false, "camera_collision": false, "pickable": false } },
+            "position": [0.0, -0.002, 0.0],
+            "rotation": [0.0, 0.0, 0.0],
+            "scale": [1.0, 1.0, 1.0],
+        })),
+        Err(error) => log.error(format!("  floor: {error:#}")),
+    }
     let kept_count = kept.len();
     objects.extend(kept);
     scene_object.insert("objects".into(), Value::Array(objects));
 
-    // in front of the first row, looking along +z
-    let center = (PER_ROW.min(count).max(1) - 1) as f32 * SPACING_X / 2.0;
     let start = json!({ "start_pos_x": center, "start_pos_y": 0.0, "start_pos_z": 0.0, "start_rot_y": 180.0 });
     scene::put_converter_entry(scene_object, "cameras", "revolt-cars-camera", scene::start_camera("revolt-cars-camera", &start), |_| true);
     scene::put_converter_entry(scene_object, "lights", "revolt-cars-sun", scene::sun("revolt-cars-sun"), |light| light["light_type"] == "Directional");

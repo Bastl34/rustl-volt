@@ -152,7 +152,7 @@ pub fn load_pages(dir: &Path, level: &str, polygons_per_page: &[usize], log: &Lo
     }).collect()
 }
 
-// pages beyond a..j that some models use, hard coded in the exe (push page, push file)
+// pages beyond a..j that some models use, hard coded in the game (push page, push file)
 // 24: the wire basket of the trolley (only in market1, the other levels take that one), 23 spru, 26 shadow, 27-29 fxpage1-3, 31 a page per level (toy2 dragon, toylite water)
 pub fn load_extra_pages(game_dir: &Path, dir: &Path, level: &str, used: &[usize], pages: &mut Vec<Option<Page>>, log: &Log)
 {
@@ -252,7 +252,7 @@ const LOADING_TILE: u32 = 256;
 // the font of the game in the project folder (RVGL's font.bmo, ui/make_font.py) - the font.bmp of the game only without it
 const PROJECT_FONT: &str = "ui/font.png";
 
-// the pages of the HUD (revolt.exe draws it from them): font, fxpage2 (arrows, speed dots, weapon frame), spru (frames) - black and its dark gray rims are transparent
+// the pages of the HUD (the game draws it from them): font, fxpage2 (arrows, speed dots, weapon frame), spru (frames) - black and its dark gray rims are transparent
 // the font: the one of the project, else font.bmp white on black - its brightness becomes the alpha, so tinted text has no dark fringe
 pub fn convert_hud_pages(settings: &Settings, log: &Log) -> Result<()>
 {

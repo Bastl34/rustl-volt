@@ -1,6 +1,14 @@
 // .fob game objects -> one glb per model + the scene objects that place them
 // the cup object of the frontend (type 48, flag 0 = the cup)
 const CUP: i32 = 48;
+// the object thrower (type 42, flag 1 = the type it throws): its model is the thrown object, not placed - the app code makes it
+const THROWER: i32 = 42;
+
+// the type whose model an object shows - a thrower the one it throws
+fn model_kind(object: &Object) -> i32
+{
+    if object.kind == THROWER { object.flags[1] } else { object.kind }
+}
 
 // the shared models (models/, levels/frontend/, cars/trolley/) use the texture pages of the level, so the glbs are per level
 
@@ -95,7 +103,7 @@ pub fn load(game_dir: &Path, dir: &Path, level: &str, log: &Log) -> Result<Level
                         {
                             polygon.texture += offset;
                         }
-                        log.info(format!("  {file}: texture pages + {offset} (like the exe)"));
+                        log.info(format!("  {file}: texture pages + {offset} (like the game)"));
                     }
                     let stem = path.file_stem()?.to_string_lossy().to_lowercase();
                     models.push(ObjectModel { file: file.to_string(), stem, mesh });
@@ -117,7 +125,7 @@ pub fn load(game_dir: &Path, dir: &Path, level: &str, log: &Log) -> Result<Level
             log.warn(format!("  unknown object type {} at {:?}", object.kind, object.position));
         }
 
-        let offset = object_types::page_offset(object.kind);
+        let offset = object_types::page_offset(model_kind(object));
         let mut model = object_types::model(object.kind, &object.flags, level).and_then(|file| load_model(&file, offset, &mut models));
         if object.kind == frontend::CAR_BOX && frontend::is_frontend(level)
         {
@@ -167,7 +175,7 @@ pub fn write(level_objects: &LevelObjects, level: &str, pages: &[Option<Page>], 
             sources.push(String::new());
             continue;
         }
-        let kinds: BTreeSet<i32> = users.iter().map(|o| o.kind).collect();
+        let kinds: BTreeSet<i32> = users.iter().map(|o| model_kind(o)).collect();
         let kind = *kinds.first().unwrap_or(&-1);
         let kind_type = object_type(kind);
 
@@ -304,7 +312,8 @@ pub fn write(level_objects: &LevelObjects, level: &str, pages: &[Option<Page>], 
         }
 
         // only the rigid bodies collide - the other objects move in code in the original (not done yet)
-        let dynamic = model.is_some_and(|m| dynamic_models.contains(&m));
+        let thrower = object.kind == THROWER;
+        let dynamic = !thrower && model.is_some_and(|m| dynamic_models.contains(&m));
         let mut tags = vec![json!("revolt_object"), json!(type_tag)];
         if dynamic { tags.push(json!("revolt_physics")); }
 
@@ -321,6 +330,7 @@ pub fn write(level_objects: &LevelObjects, level: &str, pages: &[Option<Page>], 
         });
         match model
         {
+            Some(m) if thrower => { scene_object["extras"]["revolt_thrown_source"] = json!(sources[*m]); markers += 1; },
             Some(m) => scene_object["source"] = json!(sources[*m]),
             None => markers += 1,
         }
@@ -353,7 +363,7 @@ pub fn write(level_objects: &LevelObjects, level: &str, pages: &[Option<Page>], 
                     scene_object["extras"]["revolt_sound_min_distance"] = json!(ambient.min_distance);
                     scene_object["extras"]["revolt_sound_max_distance"] = json!(ambient.max_distance);
                     scene_object["components"] = json!([ambient.component]);
-                    log.info(format!("  {:<22} sound {} ({}), full volume up to {:.1} m, the exe stops it beyond {:.1} m", "", ambient.sound, if ambient.random { "random play" } else { "loop" }, ambient.min_distance, ambient.max_distance));
+                    log.info(format!("  {:<22} sound {} ({}), full volume up to {:.1} m, the game stops it beyond {:.1} m", "", ambient.sound, if ambient.random { "random play" } else { "loop" }, ambient.min_distance, ambient.max_distance));
                     if ambient.random { ambients.1 += 1; } else { ambients.0 += 1; }
                 },
                 None => log.warn(format!("  {name}: no sound for name {} in level {level}", object.flags[0])),

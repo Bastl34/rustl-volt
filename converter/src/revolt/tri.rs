@@ -6,10 +6,12 @@ use anyhow::{bail, Result};
 
 use super::reader::Reader;
 
-// type 0: the piano of toylite (the keyboard is hard coded in the exe)
+// type 0: the piano of toylite (the keyboard is hard coded in the game)
 pub const TRIGGER_PIANO: i32 = 0;
 // type 2: a track direction sign, flag = order << 16 | sign
 pub const TRIGGER_TRACK_DIR: i32 = 2;
+// type 6: the object thrower whose ID is the flag throws its object - once, when the first car enters the box
+pub const TRIGGER_THROW: i32 = 6;
 
 pub struct Trigger
 {

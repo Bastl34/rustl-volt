@@ -12,7 +12,7 @@ use crate::object_sounds::ObjectSounds;
 use crate::object_type::ObjectType;
 use crate::random::Random;
 
-// game units and seconds like the exe
+// game units and seconds like the game
 const COPTER_WAIT: f32 = 2.0;
 const COPTER_TAKEOFF_BACK: f32 = 600.0;
 const COPTER_MAX_SPEED: f32 = 300.0;

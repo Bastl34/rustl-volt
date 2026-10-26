@@ -1,7 +1,8 @@
-// the music of a level like the game (revolt.exe, cd audio): a random track of the REDBOOK range, played on to the end of the range, then again from that track
+// the music of a level like the game (cd audio): a random track of the REDBOOK range, played on to the end of the range, then again from that track
 // the converter writes the range as level extras (music_track_start / _end, 0 = Track02) and puts its tracks into the scene sound list
 
 use rustl::prelude::*;
+use rustl::resources::resources::load_binary;
 use rustl::state::resources::sound_source::SoundSourceItem;
 use rustl::state::scene::components::sound::{Sound, SoundCategory, SoundType};
 use rustl::state::state::State;
@@ -18,6 +19,8 @@ pub struct Music
     first: usize,
     current: usize,
     sound: Option<Sound>,
+    // one track once, then silence (the result music of a championship)
+    once: bool,
 }
 
 impl Music
@@ -41,7 +44,25 @@ impl Music
         }
 
         let first = random_index(tracks.len());
-        let mut music = Self { tracks, first, current: first, sound: None };
+        let mut music = Self { tracks, first, current: first, sound: None, once: false };
+        music.play();
+        Some(music)
+    }
+
+    // like the game back in the frontend after a championship: Track13 for a place on the podium, else Track14 - once, from assets/music
+    pub fn result(state: &mut State, assets: &str, podium: bool) -> Option<Self>
+    {
+        let name = format!("track{:02}", if podium { 13 } else { 14 });
+        let source = match state.resources.sound_sources.values().find(|source| source.read().unwrap().name == name).cloned()
+        {
+            Some(source) => source,
+            None =>
+            {
+                let bytes = load_binary(&format!("{assets}/music/{name}.ogg")).map_err(|error| { console_warning!("music: {} - {:?}", name, error); }).ok()?;
+                state.load_sound_source_byte_or_reuse(&bytes, &name, Some("ogg".to_string()))
+            },
+        };
+        let mut music = Self { tracks: vec![(name, source)], first: 0, current: 0, sound: None, once: true };
         music.play();
         Some(music)
     }
@@ -53,6 +74,10 @@ impl Music
         if let Some(sound) = self.sound.as_mut()
         {
             sound.update_state(None, None, true);
+        }
+        if self.once && self.sound.as_ref().is_some_and(|sound| sound.stopped())
+        {
+            self.sound = None;
         }
         if self.sound.as_ref().is_some_and(|sound| sound.stopped())
         {

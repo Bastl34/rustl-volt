@@ -11,7 +11,7 @@ use super::scene::relative_path;
 use super::{Log, Settings};
 use crate::revolt::find_file;
 
-// audio tracks of the cd: Track02..Track15 - the exe reads at most 14
+// audio tracks of the cd: Track02..Track15 - the game reads at most 14
 const FIRST_CD_TRACK: i64 = 2;
 const TRACK_COUNT: i64 = 14;
 

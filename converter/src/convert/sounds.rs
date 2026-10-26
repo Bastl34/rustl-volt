@@ -163,17 +163,16 @@ fn clean_wav(wav: &Path, out: &Path) -> Result<()>
     Ok(())
 }
 
-// the engine loop of a car: by class (0 electric, 1 glow) - the clockwork cars and the ufo have their own (not checked in the exe)
+// the engine loop of a car like the game: wincar4 the clockwork, the ufo its own, else Class 0 moto and every other class petrol (the trolley too)
 pub fn engine_sound(car: &str, class: Option<i64>) -> Option<&'static str>
 {
     let car = car.to_lowercase();
     match (car.as_str(), class)
     {
-        ("trolley", _) => None,
+        ("wincar4", _) => Some("clockwrk"),
         ("ufo", _) => Some("ufo"),
-        (id, _) if id.starts_with("wincar") => Some("clockwrk"),
-        (_, Some(1)) => Some("petrol"),
-        _ => Some("moto"),
+        (_, Some(0) | None) => Some("moto"),
+        _ => Some("petrol"),
     }
 }
 
@@ -259,7 +258,7 @@ pub fn car_components(object_uuid: &str, engine: Option<&str>) -> Vec<Value>
 // component name on a 3D sound object - the app code starts it (loop) or plays it now and then (random play)
 pub const AMBIENT: &str = "Ambient";
 
-// the exe loads 43 global sounds, then the block of the level - sound id = 43 + index in the block
+// the game loads 43 global sounds, then the block of the level - sound id = 43 + index in the block
 const GLOBAL_SOUNDS: usize = 43;
 // sound id per name flag, 40-47 are the cut Rooftops level
 const SOUND_OF_NAME: [usize; 48] = [44, 47, 48, 50, 51, 52, 45, 46, 50, 53, 43, 44, 45, 43, 43, 44, 45, 46, 47, 46, 47, 48, 46, 43, 44, 45, 46, 47, 43, 44, 45, 47, 46, 48, 47, 48, 49, 50, 54, 48, 44, 44, 44, 44, 44, 44, 44, 44];
@@ -299,7 +298,7 @@ pub struct Ambient
     pub sound: &'static str,
     // random play: one shot now and then (10-30 s pause), else a loop
     pub random: bool,
-    // meters: full volume up to min, the exe stops it beyond max
+    // meters: full volume up to min, the game stops it beyond max
     pub min_distance: f32,
     pub max_distance: f32,
     pub component: Value,
@@ -315,14 +314,14 @@ pub fn ambient(level: &str, object_uuid: &str, flags: &[i32; 4], scale: f32) -> 
     let range = flags[1] as f32 * 0.1;
     let (min_distance, max_distance) = (range * 3.0 * miles_to_meters, range * 34.0 * miles_to_meters);
     let random = flags[2] != 0;
-    // the exe plays them at full volume (127)
+    // the game plays them at full volume (127)
     let component = component(object_uuid, AMBIENT, sound, 1.0, !random, min_distance.max(0.01));
     Some(Ambient { sound, random, min_distance, max_distance, component })
 }
 
 // ********** moving objects (formats/README.md, Object motion) **********
 
-// the sound ids the exe plays for a moving object, by role - the app code plays them (extras revolt_sound_<role>)
+// the sound ids the game plays for a moving object, by role - the app code plays them (extras revolt_sound_<role>)
 // loop: looped at the object; the others one shots on events of its motion
 fn object_sound_ids(kind: i32) -> &'static [(&'static str, usize)]
 {
@@ -338,7 +337,7 @@ fn object_sound_ids(kind: i32) -> &'static [(&'static str, usize)]
     }
 }
 
-// role -> sound name of the level block (the garden sprinkler gets garden/animal3 like in the exe - id 0x31 is block index 6)
+// role -> sound name of the level block (the garden sprinkler gets garden/animal3 like in the game - id 0x31 is block index 6)
 pub fn object_sounds(kind: i32, level: &str) -> Vec<(&'static str, &'static str)>
 {
     let Some(block) = level_block(level) else { return vec![]; };

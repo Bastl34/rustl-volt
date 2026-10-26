@@ -8,6 +8,7 @@ use super::reader::Reader;
 
 // light flags: 1 baked into the world at load, 2 kept as a light while racing, 4 lights moving models (cars, objects - unchecked), 16 not baked into the models
 pub const LIGHT_WORLD: u8 = 1;
+pub const LIGHT_KEPT: u8 = 2;
 pub const LIGHT_NO_MODELS: u8 = 16;
 
 // light types: omni, omni turned by the surface normal, spot, spot turned by the surface normal
@@ -15,6 +16,8 @@ pub const LIGHT_OMNI: u8 = 0;
 pub const LIGHT_OMNI_NORMAL: u8 = 1;
 pub const LIGHT_SPOT: u8 = 2;
 pub const LIGHT_SPOT_NORMAL: u8 = 3;
+// not a light: a box (light axes, the color fields are its half size) - moving models inside it get the SHADOWBOX value of the .inf added (default -96)
+pub const LIGHT_SQUARE_SHADOW: u8 = 4;
 
 pub struct Light
 {

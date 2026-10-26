@@ -29,7 +29,7 @@ const LASER_TEXELS: (u32, u32, u32) = (230, 32, 16);
 // the beam is drawn as blades crossing in its axis - from every side some width
 const LASER_BLADES: usize = 3;
 
-// the piano of the game (hard coded in the exe, units): front left corner, keyboard size, the black keys from this depth, height of the keys
+// the piano of the game (hard coded in the game, units): front left corner, keyboard size, the black keys from this depth, height of the keys
 const PIANO_X0: f32 = 1040.0;
 const PIANO_Z0: f32 = -6525.0;
 const PIANO_WIDTH: f32 = 2285.0;
@@ -50,19 +50,99 @@ pub const PIANO_SOUND: usize = 0x2B;
 // a beam 1 m long along -z and 1 m wide: the app code scales it to its length and flickering width
 pub fn write_laser(path: &Path, game_dir: &Path, log: &Log) -> Result<()>
 {
-    let mut glb = Glb::default();
     let png = laser_texture(game_dir).unwrap_or_else(|error|
     {
         log.warn(format!("  laser: gfx/fxpage1.bmp: {error:#} - a plain red beam"));
         plain_red()
     });
-    let texture = glb.png_texture(&additive_png(&png)?, "laser_additive.png");
+    write_beam(path, "laser", &png, [1.0, 0.2, 0.15])?;
+    log.write(path);
+    Ok(())
+}
+
+// the lightning of the game (battle tag arc: green, electro pulse: blue): a strip of fxpage1, across it texels v 33..47, along it 7 texels from u
+// a piece of 1 m like the laser beam - the app chains many short pieces between the cars
+pub const LIGHTNING_GREEN: u32 = 209;
+pub const LIGHTNING_BLUE: u32 = 216;
+const LIGHTNING_ACROSS: (u32, u32) = (33, 15);
+const LIGHTNING_ALONG: u32 = 7;
+
+// a square of fxpage1 (x, y, width, height in texels) as a quad of 1 m in the xy plane, facing +z, additive look
+pub const SHOCK_TILE: [u32; 4] = [0, 64, 64, 64];
+
+pub fn write_sprite(path: &Path, game_dir: &Path, tile: [u32; 4], emissive: [f32; 3], log: &Log) -> Result<()>
+{
+    let png = match image::open(game_dir.join("gfx").join("fxpage1.bmp"))
+    {
+        Ok(page) =>
+        {
+            let image = image::imageops::crop_imm(&page.to_rgba8(), tile[0], tile[1], tile[2], tile[3]).to_image();
+            let mut png = vec![];
+            image.write_to(&mut Cursor::new(&mut png), ImageFormat::Png)?;
+            png
+        },
+        Err(error) => { log.warn(format!("  sprite: gfx/fxpage1.bmp: {error:#} - a plain one")); plain_red() },
+    };
+    let name = path.file_stem().map_or("sprite".to_string(), |stem| stem.to_string_lossy().to_string());
+    let mut glb = Glb::default();
+    let texture = glb.png_texture(&additive_png(&png)?, &format!("{name}_additive.png"));
     glb.use_extension("KHR_materials_unlit");
     let material = glb.material(json!({
-        "name": "laser",
+        "name": name,
         "doubleSided": true,
         "alphaMode": "BLEND",
-        "emissiveFactor": [1.0, 0.2, 0.15],
+        "emissiveFactor": emissive,
+        "pbrMetallicRoughness": { "baseColorTexture": { "index": texture }, "metallicFactor": 0.0, "roughnessFactor": 1.0 },
+        "extensions": { "KHR_materials_unlit": {} },
+        "extras": { "revolt_blend": "additive" },
+    }));
+    let positions = [-0.5f32, -0.5, 0.0, 0.5, -0.5, 0.0, 0.5, 0.5, 0.0, -0.5, 0.5, 0.0];
+    let normals = [0.0f32, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0];
+    let uvs = [0.0f32, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0];
+    let primitive = json!({
+        "attributes": { "POSITION": glb.floats(&positions, "VEC3", true), "NORMAL": glb.floats(&normals, "VEC3", false), "TEXCOORD_0": glb.floats(&uvs, "VEC2", false) },
+        "indices": glb.indices(&[0, 1, 2, 0, 2, 3]),
+        "material": material,
+    });
+    let mesh = glb.mesh(&name, vec![primitive]);
+    let root = glb.node(json!({ "name": name, "mesh": mesh, "extras": { "rustl_collision": false, "rustl_camera_collision": false } }));
+    glb.save(path, &[root])?;
+    log.write(path);
+    Ok(())
+}
+
+pub fn write_lightning(path: &Path, game_dir: &Path, u: u32, emissive: [f32; 3], log: &Log) -> Result<()>
+{
+    let png = match image::open(game_dir.join("gfx").join("fxpage1.bmp"))
+    {
+        Ok(page) =>
+        {
+            let page = page.to_rgba8();
+            let (v, across) = LIGHTNING_ACROSS;
+            let image = RgbaImage::from_fn(across, LIGHTNING_ALONG, |x, y| { let mut pixel = *page.get_pixel(u + y, v + x); pixel[3] = 255; pixel });
+            let mut png = vec![];
+            image.write_to(&mut Cursor::new(&mut png), ImageFormat::Png)?;
+            png
+        },
+        Err(error) => { log.warn(format!("  lightning: gfx/fxpage1.bmp: {error:#} - a plain beam")); plain_red() },
+    };
+    let name = path.file_stem().map_or("lightning".to_string(), |stem| stem.to_string_lossy().to_string());
+    write_beam(path, &name, &png, emissive)?;
+    log.write(path);
+    Ok(())
+}
+
+// blades crossing along -z, 1 m long, 1 m wide, additive look
+fn write_beam(path: &Path, name: &str, png: &[u8], emissive: [f32; 3]) -> Result<()>
+{
+    let mut glb = Glb::default();
+    let texture = glb.png_texture(&additive_png(png)?, &format!("{name}_additive.png"));
+    glb.use_extension("KHR_materials_unlit");
+    let material = glb.material(json!({
+        "name": name,
+        "doubleSided": true,
+        "alphaMode": "BLEND",
+        "emissiveFactor": emissive,
         "pbrMetallicRoughness": { "baseColorTexture": { "index": texture }, "metallicFactor": 0.0, "roughnessFactor": 1.0 },
         "extensions": { "KHR_materials_unlit": {} },
         "extras": { "revolt_blend": "additive" },
@@ -90,10 +170,9 @@ pub fn write_laser(path: &Path, game_dir: &Path, log: &Log) -> Result<()>
         "indices": glb.indices(&indices),
         "material": material,
     });
-    let mesh = glb.mesh("laser", vec![primitive]);
-    let root = glb.node(json!({ "name": "laser", "mesh": mesh, "extras": { "rustl_collision": false, "rustl_camera_collision": false } }));
+    let mesh = glb.mesh(name, vec![primitive]);
+    let root = glb.node(json!({ "name": name, "mesh": mesh, "extras": { "rustl_collision": false, "rustl_camera_collision": false } }));
     glb.save(path, &[root])?;
-    log.write(path);
     Ok(())
 }
 

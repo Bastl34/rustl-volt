@@ -1,5 +1,5 @@
-// pickups and the weapons of every car like revolt.exe (formats/README.md, Pickups): a few random pickups are out, the collected one goes and another one comes
-// collecting picks a weapon by the race position, the icon spins 4 s and stops on it; Ctrl fires for the player, bots fire after a while - without an effect yet
+// pickups and the weapons of every car like the game (formats/README.md, Pickups): a few random pickups are out, the collected one goes and another one comes
+// collecting picks a weapon by the race position, the icon spins 4 s and stops on it; Ctrl fires for the player, bots fire after a while - shots.rs does the rest
 // the global star (star type 0) gives the Global Pulse at once, it is gone for the rest of the race
 
 use std::sync::{Arc, RwLock};
@@ -45,6 +45,9 @@ const BOT_WEIGHTS: [f32; WEAPON_COUNT] = [10.0, 10.0, 5.0, 10.0, 10.0, 5.0, 15.0
 
 // a pickup waits this long before it comes out (s)
 const APPEAR_DELAY: f32 = 5.0;
+// the power up test: every pickup out, a taken one back after this (s), the bots fire after this (s)
+const TEST_APPEAR_DELAY: f32 = 1.5;
+const TEST_BOT_FIRE_DELAY: [f32; 2] = [0.5, 2.5];
 // collected: it rises 64 units/s for 1 s and grows to 3 times, then it is gone
 const COLLECT_TIME: f32 = 1.0;
 const COLLECT_RISE: f32 = 0.64;
@@ -66,6 +69,7 @@ const COLLECT_SOUND: &str = "pickup";
 const APPEAR_SOUND: &str = "pickgen";
 const STAR_HALF_SIZE: f32 = 0.3;
 const GLOBAL_PULSE: usize = 10;
+const PUTTY_BOMB: usize = 3;
 
 #[derive(Clone, Copy, PartialEq)]
 enum PickupState
@@ -114,6 +118,9 @@ pub struct Weapons
     random: Random,
     // one per racer, the order of race.racers
     hands: Vec<Hand>,
+    // the power up test, per racer the weapon given by a number key - it never runs out
+    playground: bool,
+    endless: Vec<Option<usize>>,
 }
 
 // sounds of this frame for the local player: (name, pitch)
@@ -136,19 +143,20 @@ impl Hand
     }
 
     // one shot of the weapon, the hand is empty after the last one
-    fn fire(&mut self, who: &str)
+    fn fire(&mut self, who: &str) -> Option<usize>
     {
-        let Some(weapon) = self.weapon else { return; };
+        let weapon = self.weapon?;
         self.ammo = self.ammo.saturating_sub(1);
         console_log!("weapons: {} fires {} ({} left)", who, WEAPONS[weapon].0, self.ammo);
         if self.ammo == 0 { self.weapon = None; }
+        Some(weapon)
     }
 }
 
 impl Weapons
 {
-    // every pickup of the scene goes in, 2 per car + 5 of them come out after APPEAR_DELAY
-    pub fn start(scene: &Scene, racers: usize, sounds: &[SoundSourceItem]) -> Self
+    // every pickup of the scene goes in, 2 per car + 5 of them come out after APPEAR_DELAY - stars: the global stars too (not in battle tag, the stars are the battle's there)
+    pub fn start(scene: &Scene, racers: usize, sounds: &[SoundSourceItem], stars: bool, playground: bool) -> Self
     {
         let source = |name: &str| sounds.iter().find(|source| source.read().unwrap().name == name).cloned();
         let (collect, appear) = (source(COLLECT_SOUND), source(APPEAR_SOUND));
@@ -161,20 +169,21 @@ impl Weapons
             pickup.appear_sound = appear.clone().map(|source| add_sound(&pickup.node, "Pickup Appear", source));
         }
 
-        let mut stars = vec![];
-        collect_stars(&scene.nodes, &mut stars);
+        let mut global_stars = vec![];
+        if stars { collect_stars(&scene.nodes, &mut global_stars); }
+        let mut stars = global_stars;
         for star in &mut stars
         {
             star.state = PickupState::Out(0.0);
             star.collect_sound = collect.clone().map(|source| add_sound(&star.node, "Pickup Collect", source));
         }
 
-        let mut weapons = Self { pickups, stars, random: Random::default(), hands: (0..racers).map(|_| Hand::default()).collect() };
+        let mut weapons = Self { pickups, stars, random: Random::default(), hands: (0..racers).map(|_| Hand::default()).collect(), playground, endless: vec![None; racers] };
         for pickup in &weapons.pickups
         {
             pickup.show(false, 1.0, pickup.position);
         }
-        let out = (racers * 2 + 5).min(weapons.pickups.len());
+        let out = if playground { weapons.pickups.len() } else { (racers * 2 + 5).min(weapons.pickups.len()) };
         for _ in 0..out
         {
             weapons.activate_random();
@@ -183,15 +192,39 @@ impl Weapons
         weapons
     }
 
+    // the power up test: a weapon straight into the hand, refilled after every shot (None: back to the pickups; the putty bomb goes onto the car by the shots instead)
+    pub fn give(&mut self, racer: usize, weapon: Option<usize>)
+    {
+        let Some(hand) = self.hands.get_mut(racer) else { return; };
+        if let Some(slot) = self.endless.get_mut(racer) { *slot = weapon; }
+        hand.spin = 0.0;
+        hand.weapon = weapon;
+        hand.ammo = weapon.map_or(0, |weapon| WEAPONS[weapon].1);
+        if let Some(weapon) = weapon { console_log!("weapons: endless {}", WEAPONS[weapon].0); }
+    }
+
     pub fn hand(&self, racer: usize) -> Option<&Hand>
     {
         self.hands.get(racer)
     }
 
-    // fire: per local player
-    pub fn update(&mut self, scene: &Scene, race: &Race, fire: &[bool], dt: f32) -> Sounds
+    // per racer: could take a pickup
+    pub fn free_hands(&self) -> Vec<bool>
+    {
+        self.hands.iter().map(Hand::free).collect()
+    }
+
+    // per racer: the weapon in the hand
+    pub fn held(&self) -> Vec<Option<usize>>
+    {
+        self.hands.iter().map(|hand| hand.weapon).collect()
+    }
+
+    // fire: per local player - the sounds and the shots of this frame (racer, weapon)
+    pub fn update(&mut self, scene: &Scene, race: &Race, fire: &[bool], dt: f32) -> (Sounds, Vec<(usize, usize)>)
     {
         let mut sounds = vec![];
+        let mut shots = vec![];
         let boxes: Vec<(Vector3<f32>, Vector3<f32>, Vector3<f32>)> = race.racers.iter().map(|racer| car_box(scene, racer)).collect();
         let running = race.countdown <= 0.0 && !race.over;
 
@@ -264,41 +297,53 @@ impl Weapons
         {
             if hand.spin <= 0.0 { continue; }
             hand.spin = (hand.spin - dt).max(0.0);
+            if hand.spin == 0.0 && hand.chosen == PUTTY_BOMB
+            {
+                // the bomb needs no button: it is on the car at once
+                shots.push((index, PUTTY_BOMB));
+                continue;
+            }
             if hand.spin == 0.0
             {
                 hand.weapon = Some(hand.chosen);
                 hand.ammo = WEAPONS[hand.chosen].1;
-                hand.fire_in = between(&mut self.random, BOT_FIRE_DELAY);
+                hand.fire_in = between(&mut self.random, if self.playground { TEST_BOT_FIRE_DELAY } else { BOT_FIRE_DELAY });
                 if race.racers.get(index).is_some_and(Racer::is_local) { console_log!("weapons: {} x {}", WEAPONS[hand.chosen].0, hand.ammo); }
             }
         }
 
         if !running
         {
-            return sounds;
+            return (sounds, shots);
         }
 
-        // Ctrl (pad X / RB) fires for the player, the bots after a while - no effect yet
+        // Ctrl (pad X / RB) fires for the player, the bots after a while
         for (index, racer) in race.racers.iter().enumerate()
         {
             let Some(hand) = self.hands.get_mut(index) else { continue; };
             if hand.weapon.is_none() { continue; }
             match &racer.driver
             {
-                Driver::Local(player) => if fire.get(*player as usize).copied().unwrap_or(false) { hand.fire(&racer.name); },
+                Driver::Local(player) => if fire.get(*player as usize).copied().unwrap_or(false) { shots.extend(hand.fire(&racer.name).map(|weapon| (index, weapon))); },
                 Driver::Bot(_) =>
                 {
                     hand.fire_in -= dt;
                     if hand.fire_in <= 0.0
                     {
-                        hand.fire(&racer.name);
+                        shots.extend(hand.fire(&racer.name).map(|weapon| (index, weapon)));
                         hand.fire_in = between(&mut self.random, BOT_NEXT_SHOT);
                     }
                 },
             }
         }
 
-        sounds
+        // the power up test: the given weapon is back in the hand
+        for (hand, endless) in self.hands.iter_mut().zip(&self.endless)
+        {
+            if let (None, Some(weapon)) = (hand.weapon, endless) { hand.weapon = Some(*weapon); hand.ammo = WEAPONS[*weapon].1; }
+        }
+
+        (sounds, shots)
     }
 
     // Play stops: the pickups as they were, without the sounds of this code
@@ -377,7 +422,7 @@ impl Weapons
         let gone: Vec<usize> = (0..self.pickups.len()).filter(|&i| self.pickups[i].state == PickupState::Gone).collect();
         if gone.is_empty() { return; }
         let i = gone[((self.random.next() * gone.len() as f32) as usize).min(gone.len() - 1)];
-        self.pickups[i].state = PickupState::Waiting(APPEAR_DELAY);
+        self.pickups[i].state = PickupState::Waiting(if self.playground { TEST_APPEAR_DELAY } else { APPEAR_DELAY });
     }
 
     // a random weapon: players by the weights of their place, bots by their fixed row
@@ -441,7 +486,7 @@ fn grow(time: f32) -> f32
 }
 
 // the world box of a car from its chassis bounds, and its velocity
-fn car_box(scene: &Scene, racer: &Racer) -> (Vector3<f32>, Vector3<f32>, Vector3<f32>)
+pub fn car_box(scene: &Scene, racer: &Racer) -> (Vector3<f32>, Vector3<f32>, Vector3<f32>)
 {
     let car = &racer.node;
     let transform = car.read().unwrap().get_full_transform();

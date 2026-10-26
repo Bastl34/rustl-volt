@@ -1,4 +1,4 @@
-// the sounds of the moving objects like the exe (formats/README.md, Object motion): loops at the object, one shots on events of its motion
+// the sounds of the moving objects like the game (formats/README.md, Object motion): loops at the object, one shots on events of its motion
 // the converter writes the sound names as extras revolt_sound_<role>; the components go onto the moving node of the glb while playing and away again in exit
 
 use std::collections::HashMap;
@@ -33,7 +33,7 @@ pub struct ObjectSounds
     time: f32,
     phase: f32,
     ratchet: f32,
-    // horse: the swing threshold of the exe, its sign flips on every creak
+    // horse: the swing threshold of the game, its sign flips on every creak
     swing: f32,
     // sprinkler: the highest ratchet value since the last tick
     peak: f32,
@@ -176,7 +176,7 @@ impl ObjectSounds
         }
     }
 
-    // a car in the whistle box of the exe
+    // a car in the whistle box of the game
     fn car_ahead(&self) -> bool
     {
         let train = position(&self.holder);
