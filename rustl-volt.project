@@ -10,11 +10,7 @@
     "description": "",
     "license": "",
     "url": "",
-    "build": 13,
-    "editing_time_secs": 4887,
-    "export_dirs": {
-      "windows": "C:\\Users\\Bastl\\Desktop\\export\\rustl_volt"
-    }
+    "build": 13
   },
   "settings": {
     "rendering": {
