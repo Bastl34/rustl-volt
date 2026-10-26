@@ -42,7 +42,8 @@ use super::{Log, Settings};
 // 31: the balls keep their .fob tilt again (the floating was the ground plane recovery, engine fix)
 // 32: the .lit baked into every level (not only the frontend) without the square shadows (type 4) and not into pickups / stars, the runtime lights as revolt_lights
 // 33: levels without REDBOOK (Market Arena) get the music range 4 9 of the supermarket tracks
-pub const ASSET_VERSION: u32 = 33;
+// 34: the pool of ship1 / ship2 (Stream model 1 = poolwater.m)
+pub const ASSET_VERSION: u32 = 34;
 pub const FILE: &str = "convert.json";
 const FORMAT: u32 = 1;
 

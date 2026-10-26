@@ -154,6 +154,8 @@ pub struct Racer
     wrong_way_timer: f32,
     // the AI segment a local car is on (put back onto the track)
     ai: Option<AiPlace>,
+    // the last AI segment the car was on while on the track and in its zone - resets go there (off the track the nearest segment can be anywhere, e.g. from the pool of ship1)
+    track_place: Option<AiPlace>,
 
     pub laps: u32,
     lap_start: f64,
@@ -258,7 +260,7 @@ impl Racer
         {
             node, id, name, driver, slot, placed: false, top_speed,
             zone: 0, pan_node: start_node, remaining: 0.0, fraction: 0.0, fraction_known: false, backwards: true, not_crossed: true,
-            wrong_way_flag: false, wrong_way_timer: 0.0, ai: None,
+            wrong_way_flag: false, wrong_way_timer: 0.0, ai: None, track_place: None,
             laps: 0, lap_start: 0.0, last_lap: None, best_lap: None, finish_time: None, wrong_way: false, arrow: 0.0,
             speed: 0.0, speed_steps: 0.0, position: 1, sign: None, sign_timer: 0.0, sign_order: 0, ahead: None, behind: None,
             best_score: f32::MIN, stall_time: 0.0, lost_time: 0.0, stuck: assist::StuckWatch::default(), assist: (0.0, 0.0), stalls: 0, stall_score: f32::MIN,
@@ -757,7 +759,7 @@ impl Race
         let view = view(scene, &self.racers[index]).map(|view| BotView { catch_up, ..view });
         let track = &self.track;
         let racer = &mut self.racers[index];
-        let (finished, ai) = (racer.finished(), racer.ai);
+        let (finished, ai) = (racer.finished(), racer.track_place.or(racer.ai));
         match &mut racer.driver
         {
             Driver::Local(_) if finished || self.watching.is_some() => None,
@@ -876,6 +878,10 @@ impl Race
 
         update_sign(track, racer, position, dt);
         update_zone(track, racer, position);
+        if let Some(place) = racer.ai.filter(|place| place.distance <= track.half_width(place.node) && track.in_zone(racer.zone, position))
+        {
+            racer.track_place = Some(place);
+        }
         let crossing = match track.in_zone(racer.zone, position)
         {
             true => update_progress(track, racer, position, forward, right, dt),
@@ -1072,7 +1078,7 @@ impl Race
         let Some((reason, _)) = lost.filter(|(_, after)| racer.lost_time > *after) else { return; };
         racer.lost_time = 0.0;
         racer.stuck.clear();
-        let Some(place) = racer.ai else { return; };
+        let Some(place) = racer.track_place.or(racer.ai) else { return; };
         if let BotAction::Reset { position, heading, .. } = bot::reset_action(&self.track, place, 0, reason)
         {
             self.put_on_track(scene, index, position, heading, reason);

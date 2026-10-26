@@ -150,8 +150,13 @@ pub fn model(kind: i32, flags: &[i32; 4], level: &str) -> Option<String>
         44 => Some("levels/frontend/bigscreen.m".to_string()),
         45 => Some("levels/frontend/clockbody.m".to_string()),
         46 => Some("levels/frontend/carbox.m".to_string()),
-        // model 1 (ship levels) is unknown
-        47 if flags[0] == 0 => models("stream"),
+        // model 1 "Toytanic Pool": poolwater (fits the water box of ship1 / ship2)
+        47 => match flags[0]
+        {
+            0 => models("stream"),
+            1 => models("poolwater"),
+            _ => None,
+        },
         48 => Some(format!("levels/frontend/cup0{}.m", flags[0] + 1)),
         50 => models("star"),
         52 => models("tumble_weed"),

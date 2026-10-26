@@ -305,7 +305,7 @@ The game picks the model of an object in code. Matched by name:
 | 39, 44, 45, 46, 53 | `levels/frontend/`: `namestand`, `bigscreen`, `clockbody`, `carbox`, `smallscreen` |
 | 40 Sprinkler | `spbase`, in the garden `spbasegarden` (`sphead`, `spheadgarden`: heads) |
 | 41, 43 | `sphose`, `basketball` |
-| 47 Stream | model 0 "Hood Stream": `stream`; model 1 "Toytanic Pool": unknown model |
+| 47 Stream | model 0 "Hood Stream": `stream`; model 1 "Toytanic Pool": `poolwater` (flat, white, 57 × 25 m - fits the Water Box of ship1 / ship2, placed upside down like the model) |
 | 48 Cup | type 0–3: `levels/frontend/cup01`–`cup04` |
 | 50, 52, 54 | `star`, `tumble_weed`, `lantern` |
 | 56–59 | `slider`, `bottle`, `bucket`, `trafficcone` (nhood2: `n2trafficcone`) |
