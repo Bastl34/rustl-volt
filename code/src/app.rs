@@ -1589,6 +1589,8 @@ impl Game
     {
         self.race_menu = None;
         state.game_pause = false;
+        // left from the pause menu: the sounds paused there belong to the level left - started again they played on in the menu
+        self.paused_sounds = None;
         for (star, _) in self.practice_stars.drain(..)
         {
             star.write().unwrap().settings.visible = true;
