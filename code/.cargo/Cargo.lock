@@ -3680,7 +3680,7 @@ dependencies = [
 
 [[package]]
 name = "rustl_volt"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "revolt_converter",
  "rfd",
