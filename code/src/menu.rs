@@ -418,11 +418,12 @@ pub struct VideoSettings
     pub show_fps: bool,
     pub msaa: u32,
     pub shadows: Shadows,
+    pub vsync: bool,
 }
 
 impl Default for VideoSettings
 {
-    fn default() -> Self { Self { fullscreen: false, show_fps: true, msaa: 8, shadows: Shadows::Medium } }
+    fn default() -> Self { Self { fullscreen: false, show_fps: true, msaa: 8, shadows: Shadows::Medium, vsync: true } }
 }
 
 // antialiasing samples of the Video Settings (1 = off) - the engine clamps to what the gpu has
@@ -1248,7 +1249,7 @@ impl Menu
                 items
             },
             Screen::Options => vec![item("Game Settings", true), item("Video Settings", true), item("Audio Settings", true), item("Controller Settings", true), item("View Credits", false)],
-            Screen::VideoSettings => vec![item("Fullscreen", true), item("Show FPS", true), item("Antialiasing", true), item("Shadows", true), item("Reset to Defaults", true)],
+            Screen::VideoSettings => vec![item("Fullscreen", true), item("Show FPS", true), item("Antialiasing", true), item("Shadows", true), item("VSync", true), item("Reset to Defaults", true)],
             Screen::GameSettings => vec![item("Number of Cars", true), item("Number of Laps", true), item("Difficulty", true), item("Pick ups", true), item("Speed Units", true)],
             Screen::AudioSettings => vec![item("Master Volume", true), item("Music Volume", true), item("Effects Volume", true)],
             Screen::BattleSettings => vec![item("Opponents", true), item("Difficulty", true), item("Pick ups", true), item("Stars", true), item("Take Over", true), item("Start", true)],
@@ -1353,6 +1354,7 @@ impl Menu
             1 => on_off(self.video.show_fps),
             2 => match self.video.msaa.min(self.max_msaa.max(1)) { 1 => "Off".to_string(), samples => format!("{samples}x") },
             3 => self.video.shadows.label().to_string(),
+            4 => on_off(self.video.vsync),
             _ => String::new(),
         }
     }
@@ -1371,6 +1373,7 @@ impl Menu
                 video.msaa = step_option(&steps, video.msaa.min(self.max_msaa.max(1)), up, wrap);
             },
             3 => video.shadows = step_option(&Shadows::ALL, video.shadows, up, wrap),
+            4 => video.vsync = !video.vsync,
             // the window stays as it is
             _ if wrap => *video = VideoSettings { fullscreen: video.fullscreen, ..VideoSettings::default() },
             _ => {},

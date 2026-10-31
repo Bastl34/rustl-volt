@@ -54,6 +54,7 @@ use hud::Hud;
 use laser::Lasers;
 use menu::{CarInfo, ChampionshipChoice, Menu, MenuEvent, RaceAction, RaceChoice, RaceMenu, RaceMenuKind, Shadows, TrackInfo, VideoSettings, MENU_SOUND_SPEED};
 use rustl::input::keyboard::Key;
+use rustl::state::state::PresentModeSetting;
 use rustl::state::scene::components::component::ComponentItem;
 use music::Music;
 use object_type::ObjectType;
@@ -169,8 +170,8 @@ pub struct Game
     // the fullscreen of the Video Settings last given to the window (exports only)
     fullscreen_applied: Option<bool>,
     // the graphics of the Video Settings last given to the engine, the project values before (back at Stop - the editor saves them)
-    graphics_applied: Option<(u32, Shadows)>,
-    graphics_before: Option<(u32, bool, bool, bool, u32)>,
+    graphics_applied: Option<(u32, Shadows, bool)>,
+    graphics_before: Option<(u32, bool, bool, bool, u32, PresentModeSetting)>,
     // the car of the player whose sounds are stereo (cars::set_own_car_sounds)
     own_car: Option<NodeItem>,
     // split screen: the input device of each local player - empty for one player (all devices)
@@ -708,8 +709,9 @@ impl App for Game
             // the editor gets its scenes back as they were loaded before Play
             self.unload_game_scenes(&mut state, None);
             state.hide_cursor = false;
-            if let Some((msaa, ssao, ssao_half_res, shadow, shadow_resolution)) = self.graphics_before.take()
+            if let Some((msaa, ssao, ssao_half_res, shadow, shadow_resolution, present_mode)) = self.graphics_before.take()
             {
+                state.rendering.present_mode.set(present_mode);
                 state.rendering.msaa.set(msaa);
                 state.rendering.ssao = ssao;
                 state.rendering.ssao_half_res = ssao_half_res;
@@ -845,22 +847,23 @@ impl Game
         }
     }
 
-    // antialiasing and shadows of the Video Settings, no ambient occlusion - also in the editor, Stop gives the project values back
+    // antialiasing, shadows and vsync of the Video Settings, no ambient occlusion - also in the editor, Stop gives the project values back
     fn update_graphics(&mut self, state: &mut State)
     {
         let video = self.video();
-        let graphics = (video.msaa, video.shadows);
+        let graphics = (video.msaa, video.shadows, video.vsync);
         if self.graphics_applied == Some(graphics) { return; }
         let rendering = &mut state.rendering;
         if self.graphics_before.is_none()
         {
-            self.graphics_before = Some((*rendering.msaa.get_ref(), rendering.ssao, rendering.ssao_half_res, *rendering.shadow.get_ref(), *rendering.shadow_map_resolution.get_ref()));
+            self.graphics_before = Some((*rendering.msaa.get_ref(), rendering.ssao, rendering.ssao_half_res, *rendering.shadow.get_ref(), *rendering.shadow_map_resolution.get_ref(), *rendering.present_mode.get_ref()));
         }
         rendering.msaa.set(video.msaa);
         // everything of the game is unlit - the shader takes no ambient occlusion there, the pass would only cost
         rendering.ssao = false;
         rendering.shadow.set(video.shadows != Shadows::Off);
         if let Some(resolution) = video.shadows.resolution() { rendering.shadow_map_resolution.set(resolution); }
+        rendering.present_mode.set(if video.vsync { PresentModeSetting::VSync } else { PresentModeSetting::VSyncOff });
         self.graphics_applied = Some(graphics);
     }
 
