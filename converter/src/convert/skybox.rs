@@ -10,7 +10,7 @@ use super::scene::relative_path;
 use super::texture::load_plain;
 use super::{Log, Settings};
 use crate::glb::Glb;
-use crate::revolt::find_file;
+use crate::revolt::{find_file, game_path};
 use crate::revolt::fob::Object;
 
 const SKYBOX: i32 = 55;
@@ -36,7 +36,7 @@ pub fn sky_folder(game_dir: &Path, dir: &Path, objects: &[Object]) -> Option<Pat
     }
 
     let set = objects.iter().find(|o| o.kind == SKYBOX).and_then(|o| SKY_SETS.get(usize::try_from(o.flags[0]).ok()?))?;
-    let folder = game_dir.join("levels").join(set);
+    let folder = game_path(game_dir, &format!("levels/{set}"));
     find_file(&folder, "sky_ft.bmp").map(|_| folder)
 }
 

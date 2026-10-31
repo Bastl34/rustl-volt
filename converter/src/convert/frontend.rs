@@ -10,7 +10,7 @@ use super::geometry::{to_gltf, MeshWriter};
 use super::texture::{load_plain, Page};
 use super::Log;
 use crate::glb::Glb;
-use crate::revolt::find_file;
+use crate::revolt::{find_file, game_path};
 use crate::revolt::mesh::{Mesh, FACE_ENV};
 
 pub const LEVEL: &str = "frontend";
@@ -101,8 +101,8 @@ fn name_wheel(glb: &mut Glb, writer: &mut MeshWriter, parts: &[&Mesh], scale: f3
 // one hidden quad per gfx/<level>.bmp (the preview images of the track menu): screen_<level> - the app code shows the selected one
 fn track_pictures(glb: &mut Glb, game_dir: &Path, scale: f32, log: &Log) -> Vec<usize>
 {
-    let gfx = game_dir.join("gfx");
-    let mut levels: Vec<String> = std::fs::read_dir(game_dir.join("levels")).into_iter().flatten().flatten()
+    let gfx = game_path(game_dir, "gfx");
+    let mut levels: Vec<String> = std::fs::read_dir(game_path(game_dir, "levels")).into_iter().flatten().flatten()
         .filter(|entry| entry.path().is_dir())
         .map(|entry| entry.file_name().to_string_lossy().to_lowercase())
         .filter(|level| !is_frontend(level))

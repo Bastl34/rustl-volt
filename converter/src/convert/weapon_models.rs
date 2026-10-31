@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use super::geometry::{linear_rgba, to_gltf};
 use super::{Log, Settings};
 use crate::glb::Glb;
-use crate::revolt::find_file;
+use crate::revolt::{find_file, game_path};
 use crate::revolt::mesh::Mesh;
 
 // the putty bomb ball is see through
@@ -26,7 +26,7 @@ const SPRITE_FADE: [f32; 2] = [0.34, 0.5];
 
 pub fn convert(settings: &Settings, log: &Log) -> Result<()>
 {
-    let dir = settings.game_dir.join("models");
+    let dir = game_path(&settings.game_dir, "models");
     let out = settings.out_dir.join("models");
     std::fs::create_dir_all(&out)?;
     // the ball bearing is ball.m in one gray (the game draws it chrome, the app adds the env map) - its own colors made it a beach ball
@@ -50,7 +50,7 @@ pub fn convert(settings: &Settings, log: &Log) -> Result<()>
     // the shockwave of the game: the blue web of fxpage1 as a sprite, the app turns it to the camera
     super::effects::write_sprite(&out.join("shock_sprite.glb"), &settings.game_dir, super::effects::SHOCK_TILE, [0.3, 0.5, 1.4], log)?;
     // the skins of the game (turbo, zap, bomb): fxpage1 as it is, the app moves the uvs of a copy of the car over its tiles
-    match image::open(settings.game_dir.join("gfx").join("fxpage1.bmp"))
+    match image::open(game_path(&settings.game_dir, "gfx/fxpage1.bmp"))
     {
         Ok(image) =>
         {

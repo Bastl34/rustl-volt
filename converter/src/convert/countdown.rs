@@ -5,14 +5,14 @@ use anyhow::{Context, Result};
 use serde_json::{json, Map, Value};
 
 use super::{Log, Settings};
-use crate::revolt::find_file;
+use crate::revolt::{find_file, game_path};
 use crate::revolt::mesh::Mesh;
 
 const MODELS: [&str; 4] = ["go3", "go2", "go1", "gogo"];
 
 pub fn convert(settings: &Settings, log: &Log) -> Result<()>
 {
-    let dir = settings.game_dir.join("models");
+    let dir = game_path(&settings.game_dir, "models");
     let mut models = Map::new();
 
     for name in MODELS

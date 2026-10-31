@@ -7,7 +7,7 @@ use eframe::egui::{self, RichText};
 
 use revolt_converter::convert::{self, cars, Log, LogLevel, Message, Settings};
 use revolt_converter::download;
-use revolt_converter::revolt::{find_file, has_reversed, inf::Inf, list_levels, MIRRORED, REVERSED};
+use revolt_converter::revolt::{find_file, game_path, has_reversed, inf::Inf, list_levels, MIRRORED, REVERSED};
 use crate::log_view::LogView;
 use revolt_converter::steam;
 
@@ -100,7 +100,7 @@ impl ConverterApp
         // the variants of a race track right below it: <level>/reversed, <level>/mirrored, <level>/reversed/mirrored
         self.levels = list_levels(&game_dir).into_iter().flat_map(|id|
         {
-            let level_dir = game_dir.join("levels").join(&id);
+            let level_dir = game_path(&game_dir, &format!("levels/{id}"));
             let name = find_file(&level_dir, &format!("{id}.inf")).and_then(|path| Inf::load(&path).name()).unwrap_or_default();
             let selected = id.eq_ignore_ascii_case("garden1");
             let variants = match has_reversed(&game_dir, &id)

@@ -36,7 +36,7 @@ fn steam_path() -> Option<PathBuf>
 fn steam_path() -> Option<PathBuf>
 {
     let home = PathBuf::from(std::env::var_os("HOME")?);
-    [".steam/steam", ".local/share/Steam", "Library/Application Support/Steam"].iter().map(|dir| home.join(dir)).find(|path| path.is_dir())
+    [".steam/steam", ".local/share/Steam", ".var/app/com.valvesoftware.Steam/.local/share/Steam", "Library/Application Support/Steam"].iter().map(|dir| home.join(dir)).find(|path| path.is_dir())
 }
 
 fn install_dir(library: &Path) -> Option<PathBuf>

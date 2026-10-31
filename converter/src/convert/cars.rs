@@ -14,7 +14,7 @@ use super::scene::{self, relative_path};
 use super::texture::{load_extra_pages, load_page, Page};
 use super::{Log, Settings};
 use crate::glb::Glb;
-use crate::revolt::find_file;
+use crate::revolt::{find_file, game_file, game_path};
 use crate::revolt::hul;
 use crate::revolt::mesh::{Mesh, FACE_ENV, FACE_NOENV, FACE_TEXANIM};
 use crate::revolt::parameters::{self, Block, Parameters};
@@ -39,7 +39,7 @@ pub struct ConvertedCar
 // a car is a folder in cars/ with a Parameters.txt - (folder, name in the game)
 pub fn list(game_dir: &Path) -> Vec<(String, String)>
 {
-    let Ok(entries) = std::fs::read_dir(game_dir.join("cars")) else { return vec![]; };
+    let Ok(entries) = std::fs::read_dir(game_path(game_dir, "cars")) else { return vec![]; };
 
     let mut cars: Vec<(String, String)> = entries
         .filter_map(|entry| entry.ok().map(|e| e.path()))
@@ -59,7 +59,7 @@ pub fn list(game_dir: &Path) -> Vec<(String, String)>
 pub fn convert(settings: &Settings, car: &str, log: &Log) -> Result<ConvertedCar>
 {
     let id = car.to_lowercase();
-    let dir = settings.game_dir.join("cars").join(car);
+    let dir = game_path(&settings.game_dir, &format!("cars/{car}"));
     let params_path = find_file(&dir, "parameters.txt").context("Parameters.txt missing")?;
     let params = parameters::load(&params_path)?;
     let name = params.top.text("Name").unwrap_or_default().to_string();
@@ -536,12 +536,6 @@ pub fn write_showroom(settings: &Settings, cars: &[ConvertedCar], log: &Log) -> 
 fn model_list(params: &Parameters) -> Vec<(i32, String)>
 {
     (0..32).filter_map(|n| params.model(n).map(|path| (n, path))).collect()
-}
-
-// a path of the game ("cars\Adeon\car.bmp") - every part case-insensitive (the folder is adeon)
-fn game_file(game_dir: &Path, path: &str) -> Option<PathBuf>
-{
-    path.split(['\\', '/']).filter(|part| !part.is_empty()).try_fold(game_dir.to_path_buf(), |dir, part| find_file(&dir, part))
 }
 
 // the entries of a block as flat extras: one value as it is, 3 as _x _y _z, more as _0 _1 ...

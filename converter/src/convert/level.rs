@@ -13,7 +13,7 @@ use super::texture::{load_extra_pages, load_pages};
 use super::collision::{self, CollisionStats};
 use super::{bodies, clouds, effects, frontend, instances, lights, mirror, objects, playground, scene, skybox, sounds, start_car, track, Log, Settings};
 use crate::glb::Glb;
-use crate::revolt::{find_file, MIRRORED, REVERSED};
+use crate::revolt::{find_file, game_path, MIRRORED, REVERSED};
 
 // the engine makes a node per primitive - per big cube muse2 had 460 for 12k triangles, the cpu paid for every one
 const LEVEL_CELL_M: f32 = 80.0;
@@ -31,9 +31,9 @@ pub fn convert(settings: &Settings, id: &str, log: &Log, progress: &dyn Fn(f32))
     let mut scene_name = if reversed { format!("{level}_{REVERSED}") } else { level.to_string() };
     if mirrored { scene_name += &format!("_{MIRRORED}"); }
     let settings = &Settings { mirrored, ..settings.clone() };
-    let dir = settings.game_dir.join("levels").join(level);
+    let dir = game_path(&settings.game_dir, &format!("levels/{level}"));
     // .fin, .taz, .pan, .fan of this direction
-    let track_dir = if reversed { dir.join(REVERSED) } else { dir.clone() };
+    let track_dir = if reversed { game_path(&dir, REVERSED) } else { dir.clone() };
     let inf_path = find_file(&dir, &format!("{level}.inf"));
     let inf = inf_path.as_ref().map(|path| Inf::load(path));
     let variant = match (reversed, mirrored) { (true, true) => " (reversed, mirrored)", (true, false) => " (reversed)", (false, true) => " (mirrored)", _ => "" };
