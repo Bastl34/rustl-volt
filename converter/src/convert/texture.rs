@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use image::{ImageFormat, RgbaImage};
 
 use super::{Log, Settings};
-use crate::revolt::find_file;
+use crate::revolt::{find_file, game_path};
 
 pub struct Page
 {
@@ -156,8 +156,8 @@ pub fn load_pages(dir: &Path, level: &str, polygons_per_page: &[usize], log: &Lo
 // 24: the wire basket of the trolley (only in market1, the other levels take that one), 23 spru, 26 shadow, 27-29 fxpage1-3, 31 a page per level (toy2 dragon, toylite water)
 pub fn load_extra_pages(game_dir: &Path, dir: &Path, level: &str, used: &[usize], pages: &mut Vec<Option<Page>>, log: &Log)
 {
-    let gfx = game_dir.join("gfx");
-    let market1 = game_dir.join("levels").join("market1");
+    let gfx = game_path(game_dir, "gfx");
+    let market1 = game_path(game_dir, "levels/market1");
     for &page in used
     {
         let (folder, file) = match (page, level.to_lowercase().as_str())
@@ -204,7 +204,7 @@ pub fn load_extra_pages(game_dir: &Path, dir: &Path, level: &str, used: &[usize]
 // gfx/envstill.bmp (world), envroll.bmp (cars), envfront.bmp (ENVSTILL of some levels) as separate png files
 pub fn convert_env_maps(settings: &Settings, log: &Log) -> Result<()>
 {
-    let gfx = settings.game_dir.join("gfx");
+    let gfx = game_path(&settings.game_dir, "gfx");
     let out = settings.out_dir.join("gfx");
     std::fs::create_dir_all(&out)?;
 
@@ -224,7 +224,7 @@ pub fn convert_env_maps(settings: &Settings, log: &Log) -> Result<()>
 // 1 top left, 2 top right, 3 bottom left, 4 bottom right
 pub fn convert_loading_screens(settings: &Settings, log: &Log) -> Result<()>
 {
-    let gfx = settings.game_dir.join("gfx");
+    let gfx = game_path(&settings.game_dir, "gfx");
     let out = settings.out_dir.join("gfx");
     std::fs::create_dir_all(&out)?;
 
@@ -256,7 +256,7 @@ const PROJECT_FONT: &str = "ui/font.png";
 // the font: the one of the project, else font.bmp white on black - its brightness becomes the alpha, so tinted text has no dark fringe
 pub fn convert_hud_pages(settings: &Settings, log: &Log) -> Result<()>
 {
-    let gfx = settings.game_dir.join("gfx");
+    let gfx = game_path(&settings.game_dir, "gfx");
     let out = settings.out_dir.join("gfx");
     std::fs::create_dir_all(&out)?;
 
@@ -289,7 +289,7 @@ pub fn convert_hud_pages(settings: &Settings, log: &Log) -> Result<()>
     }
 
     // the title icons of the menu (5 per row, 48 texels): gray on black - the brightness becomes the alpha
-    let frontend = settings.game_dir.join("levels").join("frontend");
+    let frontend = game_path(&settings.game_dir, "levels/frontend");
     match find_file(&frontend, "frontendf.bmp")
     {
         Some(source) =>

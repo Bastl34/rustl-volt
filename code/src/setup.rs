@@ -384,7 +384,10 @@ impl Setup
             dir
         };
 
-        if converted(&self.project_dir)
+        // the .app of a mac export is never written: it stays as signed and shipped, a zip or dmg of it must not carry the files of the original game
+        let in_bundle = in_app_bundle(&self.project_dir);
+
+        if !in_bundle && converted(&self.project_dir)
         {
             return Ok(self.project_dir.clone());
         }
@@ -392,11 +395,12 @@ impl Setup
         {
             if converted(dir) { return Ok(use_data(root, dir.clone())); }
         }
-        if writable(&self.project_dir)
+        if !in_bundle && writable(&self.project_dir)
         {
             return Ok(self.project_dir.clone());
         }
-        console_warning!("setup: {} is read only", self.project_dir.display());
+        if in_bundle { console_log!("setup: {} is in the app bundle", self.project_dir.display()); }
+        else { console_warning!("setup: {} is read only", self.project_dir.display()); }
         match (&data_root, in_data)
         {
             (Some(root), Some(dir)) => Ok(use_data(root, dir)),
@@ -789,6 +793,22 @@ fn writable(dir: &Path) -> bool
     let ok = std::fs::write(&probe, b"rustl-volt").is_ok();
     let _ = std::fs::remove_file(&probe);
     ok
+}
+
+// mac: the folder lies inside the .app of the running executable
+#[cfg(target_os = "macos")]
+fn in_app_bundle(dir: &Path) -> bool
+{
+    let Ok(exe) = std::env::current_exe() else { return false; };
+    let Some(bundle) = exe.ancestors().find(|path| path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("app"))) else { return false; };
+    let real = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    real(dir).starts_with(real(bundle))
+}
+
+#[cfg(all(not(target_os = "macos"), not(target_arch = "wasm32")))]
+fn in_app_bundle(_dir: &Path) -> bool
+{
+    false
 }
 
 fn quit(state: &mut State)

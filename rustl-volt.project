@@ -10,7 +10,7 @@
     "description": "",
     "license": "",
     "url": "",
-    "build": 14
+    "build": 19
   },
   "settings": {
     "rendering": {
@@ -29,6 +29,7 @@
       ],
       "fog_density": 0.019999999552965164,
       "frustum_culling": true,
+      "low_latency": false,
       "max_texture_resolution": null,
       "msaa": 8,
       "occlusion_culling": false,

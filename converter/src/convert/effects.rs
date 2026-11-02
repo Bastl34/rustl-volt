@@ -13,7 +13,7 @@ use super::scene::relative_path;
 use super::texture::additive_png;
 use super::{Log, Settings};
 use crate::glb::Glb;
-use crate::revolt::{find_file, tri};
+use crate::revolt::{find_file, game_path, tri};
 use crate::revolt::ncp::{Ncp, NCP_CAMERA_ONLY, NCP_DOUBLE};
 use crate::revolt::fob::Object;
 
@@ -72,7 +72,7 @@ pub const SHOCK_TILE: [u32; 4] = [0, 64, 64, 64];
 
 pub fn write_sprite(path: &Path, game_dir: &Path, tile: [u32; 4], emissive: [f32; 3], log: &Log) -> Result<()>
 {
-    let png = match image::open(game_dir.join("gfx").join("fxpage1.bmp"))
+    let png = match image::open(game_path(game_dir, "gfx/fxpage1.bmp"))
     {
         Ok(page) =>
         {
@@ -113,7 +113,7 @@ pub fn write_sprite(path: &Path, game_dir: &Path, tile: [u32; 4], emissive: [f32
 
 pub fn write_lightning(path: &Path, game_dir: &Path, u: u32, emissive: [f32; 3], log: &Log) -> Result<()>
 {
-    let png = match image::open(game_dir.join("gfx").join("fxpage1.bmp"))
+    let png = match image::open(game_path(game_dir, "gfx/fxpage1.bmp"))
     {
         Ok(page) =>
         {
@@ -209,7 +209,7 @@ fn ray_one_sided(ncp: &Ncp, origin: [f32; 3], direction: [f32; 3], reach: f32) -
 // the band across the beam as one row: the first 16 texels down from (230, 32) of fxpage1
 fn laser_texture(game_dir: &Path) -> Result<Vec<u8>>
 {
-    let page = image::open(game_dir.join("gfx").join("fxpage1.bmp"))?.to_rgba8();
+    let page = image::open(game_path(game_dir, "gfx/fxpage1.bmp"))?.to_rgba8();
     let (u, v, count) = LASER_TEXELS;
     let image = RgbaImage::from_fn(count, 2, |x, _| { let mut pixel = *page.get_pixel(u, v + x); pixel[3] = 255; pixel });
     let mut png = vec![];

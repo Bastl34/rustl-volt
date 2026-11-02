@@ -112,6 +112,8 @@ pub struct Video
     pub msaa: Option<u32>,
     #[serde(default)]
     pub shadows: Option<Shadows>,
+    #[serde(default)]
+    pub vsync: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Default)]
@@ -221,12 +223,12 @@ impl SaveData
     pub fn video_settings(&self) -> VideoSettings
     {
         let default = VideoSettings::default();
-        self.video.map_or(default, |v| VideoSettings { fullscreen: v.fullscreen, show_fps: v.show_fps, msaa: v.msaa.unwrap_or(default.msaa), shadows: v.shadows.unwrap_or(default.shadows) })
+        self.video.map_or(default, |v| VideoSettings { fullscreen: v.fullscreen, show_fps: v.show_fps, msaa: v.msaa.unwrap_or(default.msaa), shadows: v.shadows.unwrap_or(default.shadows), vsync: v.vsync.unwrap_or(default.vsync) })
     }
 
     pub fn set_video_settings(&mut self, video: &VideoSettings)
     {
-        self.video = Some(Video { fullscreen: video.fullscreen, show_fps: video.show_fps, msaa: Some(video.msaa), shadows: Some(video.shadows) });
+        self.video = Some(Video { fullscreen: video.fullscreen, show_fps: video.show_fps, msaa: Some(video.msaa), shadows: Some(video.shadows), vsync: Some(video.vsync) });
     }
 
     // a lap or race time - true if it is a new record

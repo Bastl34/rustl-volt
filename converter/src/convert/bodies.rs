@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use super::geometry::{to_gltf, MeshWriter};
 use super::{mirror, Log};
 use crate::glb::Glb;
-use crate::revolt::find_file;
+use crate::revolt::{find_file, game_file, game_path};
 use crate::revolt::hul::{self, Hull};
 use crate::revolt::mesh::Mesh;
 use crate::revolt::parameters;
@@ -128,7 +128,7 @@ pub fn write(glb: &mut Glb, writer: &mut MeshWriter, kind: i32, body: &Body, mod
 // the wheels from Parameters.txt as colliding children, returns the hull file
 fn trolley(game_dir: &Path, glb: &mut Glb, writer: &mut MeshWriter, scale: f32, mirrored: bool, mass: &mut f32, volume: &mut f32, children: &mut Vec<usize>, log: &Log) -> Result<(std::path::PathBuf, usize)>
 {
-    let dir = game_dir.join("cars").join("trolley");
+    let dir = game_path(game_dir, "cars/trolley");
     let path = find_file(&dir, "parameters.txt").context("cars/trolley/Parameters.txt missing")?;
     log.read(&path);
     let params = parameters::load(&path)?;
@@ -154,7 +154,7 @@ fn trolley(game_dir: &Path, glb: &mut Glb, writer: &mut MeshWriter, scale: f32, 
             None =>
             {
                 let relative = Path::new(&model);
-                let file = find_file(&game_dir.join(relative.parent().unwrap_or(Path::new(""))), &relative.file_name().unwrap_or_default().to_string_lossy())
+                let file = game_file(game_dir, &relative.to_string_lossy())
                     .with_context(|| format!("{model} missing"))?;
                 log.read(&file);
                 let (mut wheel_mesh, lods) = Mesh::load(&file)?;
@@ -191,7 +191,7 @@ fn trolley(game_dir: &Path, glb: &mut Glb, writer: &mut MeshWriter, scale: f32, 
 
     let coll = params.top.text("COLL").map(|c| c.replace('\\', "/")).unwrap_or_else(|| "cars/trolley/trolleyhull.hul".to_string());
     let relative = Path::new(&coll);
-    let hul = find_file(&game_dir.join(relative.parent().unwrap_or(Path::new(""))), &relative.file_name().unwrap_or_default().to_string_lossy())
+    let hul = game_file(game_dir, &relative.to_string_lossy())
         .with_context(|| format!("{coll} missing"))?;
     Ok((hul, wheels))
 }

@@ -28,7 +28,7 @@ use super::scene::relative_path;
 use super::texture::Page;
 use super::{Log, Settings};
 use crate::glb::Glb;
-use crate::revolt::find_file;
+use crate::revolt::{find_file, game_file};
 use crate::revolt::fob::{self, Object};
 use crate::revolt::mesh::{Mesh, FACE_TEXANIM};
 use crate::revolt::object_types::{self, object_type};
@@ -86,7 +86,7 @@ pub fn load(game_dir: &Path, dir: &Path, level: &str, log: &Log) -> Result<Level
         *by_file.entry(file.to_string()).or_insert_with(||
         {
             let relative = Path::new(file);
-            let Some(path) = find_file(&game_dir.join(relative.parent()?), &relative.file_name()?.to_string_lossy()) else
+            let Some(path) = game_file(game_dir, &relative.to_string_lossy()) else
             {
                 log.warn(format!("  {file} not found"));
                 return None;

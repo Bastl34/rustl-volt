@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 
 use super::scene::relative_path;
 use super::{Log, Settings};
+use crate::revolt::game_path;
 
 // component names on a car - the app code finds the slots by them
 pub const ENGINE: &str = "Engine";
@@ -38,7 +39,7 @@ fn sound_path(settings: &Settings, name: &str) -> PathBuf
 // every wav of the game - a file that is already newer than its wav is kept
 pub fn convert_all(settings: &Settings, log: &Log) -> Result<()>
 {
-    let wavs = settings.game_dir.join("wavs");
+    let wavs = game_path(&settings.game_dir, "wavs");
     let mut files = vec![];
     collect_wavs(&wavs, &mut files)?;
     files.sort();

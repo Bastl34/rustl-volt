@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 use super::scene::relative_path;
 use super::{Log, Settings};
-use crate::revolt::find_file;
+use crate::revolt::{find_file, game_path};
 
 // audio tracks of the cd: Track02..Track15 - the game reads at most 14
 const FIRST_CD_TRACK: i64 = 2;
@@ -28,7 +28,7 @@ fn out_path(settings: &Settings, index: i64) -> PathBuf
 // already ogg in the steam version - copied, a copy newer than the original is kept
 pub fn copy_all(settings: &Settings, log: &Log) -> Result<()>
 {
-    let dirs = [settings.game_dir.join("music"), settings.game_dir.join("redbook")];
+    let dirs = [game_path(&settings.game_dir, "music"), game_path(&settings.game_dir, "redbook")];
     let (mut copied, mut kept, mut missing) = (0, 0, vec![]);
     for index in 0..TRACK_COUNT
     {
