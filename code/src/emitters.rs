@@ -1,9 +1,9 @@
-// the particle sources of the levels and the cars (formats/README.md "Sparks"): spark generators, the smoke of the train, the sprinklers, the dragon fire,
+// the particle sources of the levels and the cars (formats/README.md "Sparks"): spark generators, the smoke of the train, the sprinklers, the dragon fire, the dolphin fountain,
 // sparks where a car scrapes over a hard surface, bits and dust behind the wheels on soft ground, the splash of a water box
 
 use std::collections::{HashMap, HashSet};
 
-use rustl::nalgebra::Matrix4;
+use rustl::nalgebra::{Matrix4, Rotation3};
 use rustl::prelude::*;
 use rustl::state::scene::physics::contacts::ContactTarget;
 use rustl::state::scene::scene_controller::vehicle_controller::VehicleController;
@@ -29,6 +29,12 @@ const TRAIN_SMOKE_RISE: f32 = 3.5;
 const SPRINKLER_RATE: f32 = 90.0;
 const SPRINKLER_NOZZLE: [f32; 3] = [0.0, 8.0, -24.0];
 const SPRINKLER_THROW: [f32; 3] = [0.0, -1300.0, -2000.0];
+
+// dolphin fountain: drops per s from the object, thrown (world, game units/s) turned about Y by a random share of a turn, at 1.2..1.4 of it
+const DOLPHIN_RATE: f32 = 100.0;
+const DOLPHIN_THROW: [f32; 3] = [0.0, -500.0, -300.0];
+const DOLPHIN_TURN: (f32, f32) = (-0.035, 0.025);
+const DOLPHIN_SPEED: (f32, f32) = (1.2, 1.4);
 
 // dragon: fire per s while the head morph is at its end (mouth open), from around the mouth (body space, game units) along the jaw (units/s)
 const DRAGON_FIRE_RATE: f32 = 100.0;
@@ -134,6 +140,7 @@ struct SceneEmitters
     trains: Vec<Part>,
     sprinklers: Vec<Part>,
     dragons: Vec<Dragon>,
+    dolphins: Vec<NodeItem>,
     water: Vec<WaterBox>,
 }
 
@@ -153,7 +160,7 @@ impl Emitters
     pub fn add_scene(&mut self, scene: &Scene)
     {
         if self.scenes.iter().any(|emitters| emitters.scene_id == scene.id) { return; }
-        let mut emitters = SceneEmitters { scene_id: scene.id, generators: vec![], trains: vec![], sprinklers: vec![], dragons: vec![], water: vec![] };
+        let mut emitters = SceneEmitters { scene_id: scene.id, generators: vec![], trains: vec![], sprinklers: vec![], dragons: vec![], dolphins: vec![], water: vec![] };
         crate::for_each_node(&scene.nodes, &mut |node|
         {
             let read = node.read().unwrap();
@@ -171,6 +178,7 @@ impl Emitters
                 Some(ObjectType::Train) => emitters.trains.push(Part { object: node.clone(), name: "train", part: None, due: 0.0 }),
                 Some(ObjectType::Sprinkler) => emitters.sprinklers.push(Part { object: node.clone(), name: "head", part: None, due: 0.0 }),
                 Some(ObjectType::Dragon) => emitters.dragons.push(Dragon { body: Part { object: node.clone(), name: "body", part: None, due: 0.0 }, head: None }),
+                Some(ObjectType::Dolphin) => emitters.dolphins.push(node.clone()),
                 Some(ObjectType::WaterBox) =>
                 {
                     let half = Vector3::new(param("revolt_param_x_range") as f32, param("revolt_param_y_range") as f32, param("revolt_param_z_range") as f32) / UNITS;
@@ -180,7 +188,7 @@ impl Emitters
                 _ => {},
             }
         });
-        console_log!("emitters: scene '{}': {} spark generators, {} trains, {} sprinklers, {} dragons, {} water boxes", scene.name, emitters.generators.len(), emitters.trains.len(), emitters.sprinklers.len(), emitters.dragons.len(), emitters.water.len());
+        console_log!("emitters: scene '{}': {} spark generators, {} trains, {} sprinklers, {} dragons, {} dolphins, {} water boxes", scene.name, emitters.generators.len(), emitters.trains.len(), emitters.sprinklers.len(), emitters.dragons.len(), emitters.dolphins.len(), emitters.water.len());
         self.scenes.push(emitters);
     }
 
@@ -306,6 +314,22 @@ impl SceneEmitters
                 let kind = if *big_drop { Kind::SprinklerBig } else { Kind::Sprinkler };
                 *big_drop = !*big_drop;
                 particles.emit(scene.id, kind, head + nozzle * share, throw * share, 0.0);
+            }
+        }
+
+        for dolphin in &self.dolphins
+        {
+            let count = particles.due(DOLPHIN_RATE, dt);
+            if count == 0 { continue; }
+            let position = dolphin.read().unwrap().get_full_transform().column(3).xyz();
+            for _ in 0..count
+            {
+                // the game turns about its Y, which points down - the other way round here
+                let turn = DOLPHIN_TURN.0 + (DOLPHIN_TURN.1 - DOLPHIN_TURN.0) * random.next();
+                let speed = DOLPHIN_SPEED.0 + (DOLPHIN_SPEED.1 - DOLPHIN_SPEED.0) * random.next();
+                let throw = Rotation3::from_axis_angle(&Vector3::y_axis(), -turn * std::f32::consts::TAU) * gltf(DOLPHIN_THROW) * speed;
+                let kind = if random.next() < 0.5 { Kind::Dolphin } else { Kind::DolphinBig };
+                particles.emit(scene.id, kind, position, throw, 0.0);
             }
         }
 

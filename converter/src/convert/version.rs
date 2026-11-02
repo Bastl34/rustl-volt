@@ -43,7 +43,8 @@ use super::{Log, Settings};
 // 32: the .lit baked into every level (not only the frontend) without the square shadows (type 4) and not into pickups / stars, the runtime lights as revolt_lights
 // 33: levels without REDBOOK (Market Arena) get the music range 4 9 of the supermarket tracks
 // 34: the pool of ship1 / ship2 (Stream model 1 = poolwater.m)
-pub const ASSET_VERSION: u32 = 34;
+// 35: the force fields of the .fld (water) as revolt_fields
+pub const ASSET_VERSION: u32 = 35;
 pub const FILE: &str = "convert.json";
 const FORMAT: u32 = 1;
 

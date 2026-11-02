@@ -514,6 +514,8 @@ pub struct Menu
     pub gamepads: Vec<usize>,
     // antialiasing samples the gpu has - the app sets it every frame
     pub max_msaa: u32,
+    // the options opened from the race menu: the screen to go back to when they close
+    return_to: Option<Screen>,
 }
 
 impl Menu
@@ -526,7 +528,7 @@ impl Menu
             name: String::new(), letter: 0, car: 0, track: 0, arena: 0, reversed: false, mirrored: false, trial_track: 0, trial_reversed: false, trial_mirrored: false,
             message: vec![], screen_time: 0.0, clock: 0.0, events: vec![],
             folder: folder.to_string(), version: String::new(), saved: SaveData::default(), textures: None, failed: false,
-            multi: MultiSetup::default(), multi_on: false, solo: None, gamepads: vec![], max_msaa: 8,
+            multi: MultiSetup::default(), multi_on: false, solo: None, gamepads: vec![], max_msaa: 8, return_to: None,
         }
     }
 
@@ -552,6 +554,19 @@ impl Menu
         saved.set_audio_settings(&self.audio);
         saved.set_video_settings(&self.video);
         *saved != before
+    }
+
+    // the options over a paused race - back on the Options screen closes them again
+    pub fn open_options(&mut self)
+    {
+        self.return_to = Some(self.screen);
+        self.cursor[Screen::Options as usize] = 0;
+        self.go(Screen::Options);
+    }
+
+    pub fn options_open(&self) -> bool
+    {
+        self.return_to.is_some()
     }
 
     pub fn take_events(&mut self) -> Vec<MenuEvent>
@@ -1247,6 +1262,8 @@ impl Menu
                 items.push(item("Start", true));
                 items
             },
+            // over the race: what can change there
+            Screen::Options if self.return_to.is_some() => vec![item("Video Settings", true), item("Audio Settings", true), item("Controller Settings", true)],
             Screen::Options => vec![item("Game Settings", true), item("Video Settings", true), item("Audio Settings", true), item("Controller Settings", true), item("View Credits", false)],
             Screen::VideoSettings => vec![item("Fullscreen", true), item("Show FPS", true), item("Antialiasing", true), item("Shadows", true), item("Reset to Defaults", true)],
             Screen::GameSettings => vec![item("Number of Cars", true), item("Number of Laps", true), item("Difficulty", true), item("Pick ups", true), item("Speed Units", true)],
@@ -1414,6 +1431,9 @@ impl Menu
                 self.multi.assign(&pads, false);
                 self.go(Screen::MultiSetup);
             },
+            (Screen::Options, 0) if self.return_to.is_some() => self.go(Screen::VideoSettings),
+            (Screen::Options, 1) if self.return_to.is_some() => self.go(Screen::AudioSettings),
+            (Screen::Options, 2) if self.return_to.is_some() => self.go(Screen::Controls),
             (Screen::Options, 0) => self.go(Screen::GameSettings),
             (Screen::Options, 1) => self.go(Screen::VideoSettings),
             (Screen::Options, 2) => self.go(Screen::AudioSettings),
@@ -1428,6 +1448,13 @@ impl Menu
 
     fn back(&mut self)
     {
+        if let Some(screen) = self.return_to.take().filter(|_| self.screen == Screen::Options)
+        {
+            self.sound("menuprev");
+            self.cursor[Screen::Options as usize] = 0;
+            self.go(screen);
+            return;
+        }
         let previous = match self.screen
         {
             Screen::Title => return,
@@ -2113,6 +2140,8 @@ pub enum RaceAction
     NextTrack,
     MainMenu,
     GiveUp,
+    // the options of the menu over the paused race (audio, video, controls)
+    Options,
 }
 
 pub struct RaceMenu
@@ -2123,6 +2152,8 @@ pub struct RaceMenu
     assets: String,
     font: Option<TextureHandle>,
     failed: bool,
+    // the options of the menu are open instead of this one
+    pub options: bool,
 }
 
 impl RaceMenu
@@ -2143,7 +2174,13 @@ impl RaceMenu
             if matches!(kind, RaceMenuKind::Finished | RaceMenuKind::Pause) { items.push(("Next Track", RaceAction::NextTrack)); }
             items.push(("Main Menu", RaceAction::MainMenu));
         }
-        Self { kind, items, cursor: 0, assets: assets.to_string(), font: None, failed: false }
+        // the options need the menu - before the way out of the race
+        if with_menu && kind != RaceMenuKind::Finished
+        {
+            let at = items.iter().position(|(_, action)| *action == RaceAction::MainMenu).unwrap_or(items.len());
+            items.insert(at, ("Options", RaceAction::Options));
+        }
+        Self { kind, items, cursor: 0, assets: assets.to_string(), font: None, failed: false, options: false }
     }
 
     // the chosen action and the sounds (with their speed) of this frame; Esc / Backspace resume a pause

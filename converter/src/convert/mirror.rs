@@ -8,6 +8,7 @@ use super::instances::LevelInstances;
 use super::objects::LevelObjects;
 use super::Log;
 use crate::revolt::fan::AiNodes;
+use crate::revolt::fld::Field;
 use crate::revolt::fob::Object;
 use crate::revolt::hul::Hull;
 use crate::revolt::lit::Light;
@@ -156,6 +157,16 @@ pub fn lights(lights: &mut [Light])
     {
         light.position = point(light.position);
         light.axes = axes(light.axes);
+    }
+}
+
+pub fn fields(fields: &mut [Field])
+{
+    for field in fields
+    {
+        field.center = point(field.center);
+        field.axes = axes(field.axes);
+        field.direction = point(field.direction);
     }
 }
 

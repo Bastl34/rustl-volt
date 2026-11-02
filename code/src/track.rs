@@ -334,6 +334,14 @@ fn glb_root_name(path: &str) -> Option<String>
     gltf["nodes"][root]["extras"]["name"].as_str().map(|name| name.to_string())
 }
 
+// the node with the extras of the level glb (.inf, lights, fields): below the scene object tagged revolt_level, which keeps only the track extras of the scene file
+// None: no level in this scene, Some(None): its glb is not loaded yet
+pub fn level_node(scene: &Scene) -> Option<Option<NodeItem>>
+{
+    let level = find_node(&scene.nodes, &|node| node.tags.contains("revolt_level"))?;
+    Some(find_node(&vec![level], &|node| node.extras.contains("revolt_scale")))
+}
+
 pub fn find_node(nodes: &Vec<NodeItem>, test: &dyn Fn(&Node) -> bool) -> Option<NodeItem>
 {
     for node in nodes

@@ -11,6 +11,7 @@ mod cup;
 mod dinky;
 mod emitters;
 mod field;
+mod force_fields;
 mod frontend;
 mod hud;
 mod laser;
@@ -71,6 +72,7 @@ use throwers::Throwers;
 use particles::Particles;
 use weather::Weather;
 use car_light::CarLights;
+use force_fields::ForceFields;
 use weapons::Weapons;
 use rustl::state::scene::physics::contacts::ContactTarget;
 use rustl::state::state::{MouseCapture, State, REFERENCE_UPDATE_FRAMES};
@@ -142,6 +144,8 @@ pub struct Game
     weather: Weather,
     // the lights and square shadows of the level on the cars
     car_lights: CarLights,
+    // the water of the levels: buoyancy, drag, the pull upright
+    force_fields: ForceFields,
     // practice: the practice stars (type 1) of the track and whether they are found
     practice_stars: Vec<(NodeItem, bool)>,
     // the level scenes the game loaded itself (menu races) - unloaded again for the next track and at Stop
@@ -291,6 +295,7 @@ impl App for Game
         self.emitters.add_scene(scene);
         self.weather.add_scene(scene);
         self.car_lights.add_scene(scene);
+        self.force_fields.add_scene(scene);
         if !self.pianos.iter().any(|piano| piano.scene_id() == scene_id)
         {
             self.pianos.extend(Piano::start(&state, scene));
@@ -409,6 +414,7 @@ impl App for Game
         self.emitters.remove_scene(scene_id);
         self.weather.remove_scene(scene_id);
         self.car_lights.remove_scene(scene_id);
+        self.force_fields.remove_scene(scene_id);
         self.particles.remove_scene(scene_id);
         self.conveyors.remove_scene(scene_id);
         for piano in self.pianos.iter_mut().filter(|piano| piano.scene_id() == scene_id)
@@ -546,6 +552,7 @@ impl App for Game
             let mut state = context.state.borrow_mut();
             let dt = if state.paused() { 0.0 } else { frame_seconds(&state) };
             self.hover.update(&mut state, dt);
+            self.force_fields.update(&mut state, dt);
         }
         cars::update_suspension(&mut context.state.borrow_mut());
         {
@@ -621,7 +628,7 @@ impl App for Game
             }
             if let Some(menu) = self.race_menu.as_mut()
             {
-                menu.ui(ui);
+                draw_race_menu(menu, self.menu.as_mut().map(|run| &mut run.menu), ui);
             }
             return;
         }
@@ -642,7 +649,7 @@ impl App for Game
                 run.menu.showroom_ui(ui, car.as_deref(), self.race_menu.is_some(), hint);
                 if let Some(menu) = self.race_menu.as_mut()
                 {
-                    menu.ui(ui);
+                    draw_race_menu(menu, Some(&mut run.menu), ui);
                 }
                 return;
             }
@@ -651,7 +658,7 @@ impl App for Game
                 run.menu.stunt_ui(ui, &collected, self.race_menu.is_some());
                 if let Some(menu) = self.race_menu.as_mut()
                 {
-                    menu.ui(ui);
+                    draw_race_menu(menu, Some(&mut run.menu), ui);
                 }
                 return;
             }
@@ -687,6 +694,7 @@ impl App for Game
         self.particles.stop(&mut context.state.borrow_mut());
         self.weather.stop(&mut context.state.borrow_mut());
         self.car_lights.stop(&mut context.state.borrow_mut());
+        self.force_fields.stop();
         for mut piano in self.pianos.drain(..) { piano.stop(); }
         {
             let mut state = context.state.borrow_mut();
@@ -961,12 +969,7 @@ impl Game
                 racing.hint_left = (racing.hint_left - dt).max(0.0);
                 let action = match self.race_menu.as_mut()
                 {
-                    Some(menu) =>
-                    {
-                        let (action, sounds) = menu.update(&self.pad.now);
-                        for (name, speed) in sounds { play_pitched(state, name, &[speed]); }
-                        action
-                    },
+                    Some(menu) => race_menu_input(menu, Some(&mut run.menu), &mut self.save, &self.save_game, state, &self.pad.now),
                     None =>
                     {
                         if self.pad.now.pause
@@ -1016,15 +1019,7 @@ impl Game
             let pad = self.pad.now;
             let action = match self.race_menu.as_mut()
             {
-                Some(menu) =>
-                {
-                    let (action, sounds) = menu.update(&pad);
-                    for (name, speed) in sounds
-                    {
-                        play_pitched(state, name, &[speed]);
-                    }
-                    action
-                },
+                Some(menu) => race_menu_input(menu, Some(&mut run.menu), &mut self.save, &self.save_game, state, &pad),
                 None =>
                 {
                     if pad.key_enter || pad.key_back || pad.pause
@@ -1482,15 +1477,7 @@ impl Game
         }
         let action = match self.race_menu.as_mut()
         {
-            Some(menu) =>
-            {
-                let (action, sounds) = menu.update(&pad);
-                for (name, speed) in sounds
-                {
-                    play_pitched(state, name, &[speed]);
-                }
-                action
-            },
+            Some(menu) => race_menu_input(menu, self.menu.as_mut().map(|run| &mut run.menu), &mut self.save, &self.save_game, state, &pad),
             None =>
             {
                 // in the race Enter (keyboard - the pad A is the handbrake) or Start, Esc only in exports (the editor stops Play on it)
@@ -1514,7 +1501,7 @@ impl Game
         state.game_pause = false;
         match action
         {
-            RaceAction::Resume => {},
+            RaceAction::Resume | RaceAction::Options => {},
             RaceAction::Restart => self.restart_race(state),
             RaceAction::NextTrack => self.next_track(state),
             RaceAction::MainMenu if self.cup.is_some() => self.end_championship(state, None, vec![]),
@@ -1908,6 +1895,52 @@ fn set_volumes(state: &mut State, (master, effects, music): (f32, f32, f32))
     data.volume = master;
     data.effects_volume = effects;
     data.music_volume = music;
+}
+
+// the race menu, or the options of the menu opened from it (into the save as they change) - an action only of the race menu
+fn race_menu_input(race_menu: &mut RaceMenu, menu: Option<&mut Menu>, save: &mut SaveData, save_game: &str, state: &mut State, pad: &Buttons) -> Option<RaceAction>
+{
+    if race_menu.options
+    {
+        let Some(menu) = menu else { race_menu.options = false; return None; };
+        let dt = frame_seconds(state);
+        menu.update(&mut state.io.input_manager.keyboard, pad, &[], &[], dt);
+        for event in menu.take_events()
+        {
+            if let MenuEvent::Sound(name, speed) = event { play_pitched(state, name, &[speed]); }
+        }
+        if menu.store(save)
+        {
+            save.store(save_game);
+            menu.saved = save.clone();
+        }
+        race_menu.options = menu.options_open();
+        return None;
+    }
+    let (action, sounds) = race_menu.update(pad);
+    for (name, speed) in sounds
+    {
+        play_pitched(state, name, &[speed]);
+    }
+    if action == Some(RaceAction::Options)
+    {
+        if let Some(menu) = menu
+        {
+            menu.open_options();
+            race_menu.options = true;
+        }
+        return None;
+    }
+    action
+}
+
+fn draw_race_menu(race_menu: &mut RaceMenu, menu: Option<&mut Menu>, ui: &mut rustl::egui::Ui)
+{
+    match menu.filter(|_| race_menu.options)
+    {
+        Some(menu) => menu.ui(ui, &[], &[]),
+        None => race_menu.ui(ui),
+    }
 }
 
 // one shots of a sound of the scene sound list at these speeds (1 = as recorded)

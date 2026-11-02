@@ -3640,6 +3640,7 @@ dependencies = [
  "js-sys",
  "libloading 0.9.0",
  "log",
+ "naga",
  "nalgebra",
  "parry3d",
  "pollster 1.0.1",
@@ -3680,7 +3681,7 @@ dependencies = [
 
 [[package]]
 name = "rustl_volt"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "revolt_converter",
  "rfd",

@@ -969,7 +969,7 @@ const CUP_ENV_COLOR: u32 = 0xc0c0c0;
 pub fn add_instance_env_maps(state: &mut State, scene_id: u32, assets: &str)
 {
     let Some(scene) = state.find_scene_by_id(scene_id) else { return; };
-    let level = crate::track::find_node(&scene.nodes, &|node| node.tags.contains("revolt_level") && node.extras.contains("env_map"));
+    let level = crate::track::level_node(scene).flatten();
     let map = level.and_then(|level| level.read().unwrap().extras.get::<String>("env_map").cloned()).unwrap_or_else(|| "gfx/envstill.png".to_string());
     let mut instances = vec![];
     for_each_node(&scene.nodes, &mut |node|
@@ -1009,7 +1009,7 @@ pub fn add_instance_env_maps(state: &mut State, scene_id: u32, assets: &str)
 // MODELRGBPER of the .inf: the game scales the corner colors of every car model by it at load (ship2: 50 %)
 pub fn apply_level_shade(scene: &Scene, car: &NodeItem)
 {
-    let Some(level) = crate::track::find_node(&scene.nodes, &|node| node.tags.contains("revolt_level") && node.extras.contains("model_rgb")) else { return; };
+    let Some(level) = crate::track::level_node(scene).flatten() else { return; };
     let Some(share) = number(&level.read().unwrap(), "model_rgb").filter(|share| (share - 1.0).abs() > 0.001) else { return; };
     // scaled in gamma space by the game, the shader works linear
     let factor = share.max(0.0).powf(2.2);

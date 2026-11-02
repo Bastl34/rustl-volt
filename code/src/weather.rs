@@ -218,7 +218,7 @@ impl Weather
         {
             let special = self.scenes.iter().any(|weather| weather.scene_id == scene.id && (weather.rain.is_some() || weather.storm.is_some() || !weather.boxes.is_empty()));
             if !special { return None; }
-            let node = crate::track::find_node(&scene.nodes, &|node| node.tags.contains("revolt_level") && node.extras.contains("far_clip"))?;
+            let node = crate::track::level_node(scene).flatten().filter(|node| node.read().unwrap().extras.contains("far_clip"))?;
             let read = node.read().unwrap();
             let number = |key: &str| read.extras.get::<f64>(key).map(|v| *v as f32).unwrap_or(0.0);
             let color = Vector3::new(number("fog_color_r"), number("fog_color_g"), number("fog_color_b"));

@@ -32,7 +32,9 @@ Every layout below was parsed against all files of the game. "Checked" means eve
 | `<level>.pan` | position nodes | [.pan](#pan) |
 | `<level>.fan` | AI nodes | [.fan](#fan) |
 | `<level>.tri` | triggers | [.tri](#tri) |
-| `.cam` `.lit` `.vis` `.fld` | cameras, lights, visiboxes, force fields | not covered yet |
+| `<level>.lit` | lights | [.lit](#lit) |
+| `<level>.fld` | force fields (water) | [.fld](#fld) |
+| `.cam` `.vis` | camera nodes (replays), visiboxes | not covered yet |
 | `reversed/` | the same level driven backwards | |
 
 ## .w
@@ -714,7 +716,7 @@ Conventions:
 | 17 Space Man | turned by `Rot(0.001, 0.001, 0)` every frame - a tumble that depends on the frame rate |
 | 40 Sprinkler | head (`sphead.m`, garden `spheadgarden.m`) at `(0, -38, 0)` turns about its local Y at -0.2 turns/s plus a ratchet `sin(p) * 0.04` turns, `p += dt * 14.285`; a car on its hose (41) stops it for a moment; water particles |
 | 56 Slider | moves `±400` units along its local X: triangle wave from the clock, `s = (ms mod 3000) / 1500`, `2 - s` above 1; flag0 picks the sign. Sounds `market/sdrsopen` / `sdrsclos` |
-| 71 Dolphin | no model - every few seconds a jumping dolphin sprite |
+| 71 Dolphin | no model - the water jet of the fountain: while on screen one particle every 0.01 s (dolphin / dolphin big at random) from its position, velocity (0, -500, -300) world (not turned by the object) turned about Y by -0.035..0.025, × 1.2..1.4 |
 
 Sounds of the moving objects (entries of the level sound block, so the file depends on the level): plane and copter loops (toy/plane, toy/copter), train loop (toy/train) and toy/whistle once a car is within `|dx| < 400`, `-400 < train.z - car.z < 800`; dragon (toy/dragon) once when the mouth opens (at 2 s); horse (toy/creak) when `sin(phase)` passes `±0.01` (22050 Hz one way, 20000 Hz the other); sprinkler (hood/sprink - in garden1 that block entry is garden/animal3) on every ratchet peak, volume `on * 127`; slider market/sdrsclos at the open end, sdrsopen at the closed end. All with range 1.0 (full volume up to 6 m).
 
@@ -1060,6 +1062,39 @@ After the load the game frees every light without flag 2; the kept ones light th
 
 The converter bakes types 0-3 into the world, every lit instance (a model of its own) and the objects that do not move except pickups and stars (unchecked how the game lights objects). The kept lights and square shadows go into the level extras (`revolt_lights`); the app tints each car by them at its centre (car_light.rs).
 
+## .fld
+
+Force fields: oriented boxes that push the bodies inside them - in the race levels the water. Checked: all levels parse to the last byte.
+
+```
+i32 count
+count × 100 bytes:
+  i32  type        0 linear, 1 orientation, 2 velocity, 3 spherical, 4 over the whole world
+  vec3 center
+  vec3 axes[3]     rows = local axes
+  vec3 half_size
+  vec3 direction   unit
+  f32  magnitude
+  f32  damping
+  f32  ×4          64, 128, 0, 0 in every file - not read by the game
+```
+
+| Level | Fields |
+|---|---|
+| ship1, ship2 | the pool (60.7 × 5.5 × 30.1 m): linear up 2300, damping 5.5 (ship2: 2450, 1.5) + orientation 5000, damping 0 (same box) |
+| toylite | the water of the boats: linear up 2250, damping 1.5; orientation 500, damping 0.03 |
+| nhood2 | the stream: 7 tilted linear boxes, up 1900-2100 with a slight push along the stream, damping 3.5-4.5 |
+| garden1 | one flat linear box (5.9 × 0.3 × 27.4 m) over the first pond (Water Ripples 1), up 20, damping 20 - brakes falling bodies, hardly lifts |
+| wild_west1, wild_west2 | one type 4 (128³, up 100) - not used here, it needs a body flag cars seem not to have (unchecked) |
+| the others | none (count 0) |
+
+Game behaviour, per step (1/120 s), for cars and physics objects whose centre is inside the box (`|(p - center) · axis_i| <= half_i`):
+- linear: impulse `(magnitude - damping × (direction · velocity)) / 120` along the direction - not scaled by the mass, so a body of mass m gets `(magnitude - damping × v) / m` units/s². Gravity is 2200: the pool (2300) lifts a car of body mass 1.0, a heavier one sinks slowly.
+- orientation: angular impulse `(1 - damping × (axis · spin)) × magnitude / 120` about `axis = up × direction` - turns the body upright (up towards the direction).
+- the sparks with the force flag feel the fields too (not done here).
+
+The converter writes the linear and orientation fields as `revolt_fields` (level extras, glTF metres, magnitude and damping in game units); the app applies them every frame (`force_fields.rs`, per body mass of the game, awake objects only).
+
 ## Frontend (game behaviour)
 
 The menu runs in the `frontend` level (a toy shop). `FRONTEND.cam` is empty - the views are a fixed table in the exe. Checked with the converted level (2026-10-12): views 1, 2, 3, 4, 12 and 14 look at what the menus need.
@@ -1275,7 +1310,7 @@ Where the game makes them:
 - **Putty bomb**: while the fuse burns 2 spark2 a frame at the top of the aerial (with the car velocity, variation 50), every 0.1 s smoke3 off 8 points of the body (rising 80 units/s, variation 16).
 - **Podium**: spark3 for the fireworks.
 
-The remake (`code/src/particles.rs`, `emitters.rs`): the same 31 kinds with own values in m (the table above × 0.01, rounded, small changes), one instanced node per kind and scene (a quad of the tile of `models/sparks.png` = fxpage1 with black see through and its sprite tiles faded out round - the glows fill their tiles up to the edge, a square at the bigger sizes of the remake -, turned to the nearest camera, the uvs half a texel inside the tile), level bounces by a ray against the fixed colliders, no bounce off objects; trails 0 and 2 (`TrailKind`, one mesh per kind and scene rebuilt every frame, the remake's half widths 5 / 10 cm, the head of a trail nobody moves for 0.5 s ends), the podium rockets get trail 2 too. Own: the sparks (0, 1, 7, 25) are drawn stretched along their way across the view (0.025 s), the additive kinds × 1.4 (bloom), the water balloon bursts into 34 water drops. Not used: probe smoke (20), dolphins (the dolphin object is not built), popcorn, snow, star. The dragon fire is an own kind (`DragonFire`) after the 31, fired while the head morph is at 1 (no light); own: dark smoke out of it (`DragonSmoke`, alpha blended).
+The remake (`code/src/particles.rs`, `emitters.rs`): the same 31 kinds with own values in m (the table above × 0.01, rounded, small changes), one instanced node per kind and scene (a quad of the tile of `models/sparks.png` = fxpage1 with black see through and its sprite tiles faded out round - the glows fill their tiles up to the edge, a square at the bigger sizes of the remake -, turned to the nearest camera, the uvs half a texel inside the tile), level bounces by a ray against the fixed colliders, no bounce off objects; trails 0 and 2 (`TrailKind`, one mesh per kind and scene rebuilt every frame, the remake's half widths 5 / 10 cm, the head of a trail nobody moves for 0.5 s ends), the podium rockets get trail 2 too. Own: the sparks (0, 1, 7, 25) are drawn stretched along their way across the view (0.025 s), the additive kinds × 1.4 (bloom), the water balloon bursts into 34 water drops. The dolphin fountain of garden1 always sprays (not only on screen). Not used: probe smoke (20), popcorn, snow, star. The dragon fire is an own kind (`DragonFire`) after the 31, fired while the head morph is at 1 (no light); own: dark smoke out of it (`DragonSmoke`, alpha blended).
 
 ## Driving modes (game behaviour)
 

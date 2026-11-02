@@ -46,6 +46,9 @@ const ENGINE_VOLUME: f32 = 0.7;
 // full volume up to this many m - the cars of the game use range 1.0 (6 m), at 1 m they were barely heard
 const SOUND_DISTANCE: f32 = 6.0;
 
+// per car - half the engine default, 11 cars piled up to 55k pieces in every viewport
+const TIRE_MARK_PIECES: usize = 2500;
+
 // a slot of the start grid: floor point (m) and heading
 #[derive(Clone, Copy)]
 pub struct Slot
@@ -244,6 +247,7 @@ fn spawn_car(state: &mut State, scene_id: u32, assets: &str, car: &str, name: &s
     let mut controller = VehicleController::default();
     controller.get_base_mut().name = if player_camera.is_some() { PLAYER_CONTROLLER_NAME } else { BOT_CONTROLLER_NAME }.to_string();
     controller.camera.enabled = player_camera.is_some();
+    controller.tire_marks.max_pieces = TIRE_MARK_PIECES;
     if let Some(error) = cars::setup(scene, &mut controller, &node, &name, player_camera.unwrap_or(""))
     {
         scene.delete_node_by_id(node.read().unwrap().id, true, false, true, false);

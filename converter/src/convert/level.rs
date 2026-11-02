@@ -18,6 +18,7 @@ use crate::revolt::{find_file, MIRRORED, REVERSED};
 // the engine makes a node per primitive - per big cube muse2 had 460 for 12k triangles, the cpu paid for every one
 const LEVEL_CELL_M: f32 = 80.0;
 use crate::revolt::inf::Inf;
+use crate::revolt::fld::{self, Field, FIELD_LINEAR, FIELD_ORIENTATION};
 use crate::revolt::lit;
 use crate::revolt::mesh::*;
 use crate::revolt::ncp;
@@ -63,6 +64,11 @@ pub fn convert(settings: &Settings, id: &str, log: &Log, progress: &dyn Fn(f32))
         Some(path) => { log.read(&path); lit::load(&path).unwrap_or_else(|err| { log.warn(format!("  {}: {err:#} - no lights", path.display())); vec![] }) },
         None => vec![],
     };
+    let mut level_fields = match find_file(&dir, &format!("{level}.fld"))
+    {
+        Some(path) => { log.read(&path); fld::load(&path).unwrap_or_else(|err| { log.warn(format!("  {}: {err:#} - no force fields", path.display())); vec![] }) },
+        None => vec![],
+    };
     shade_models(inf.as_ref(), &mut level_instances, &mut level_objects, log);
     if mirrored
     {
@@ -73,6 +79,7 @@ pub fn convert(settings: &Settings, id: &str, log: &Log, progress: &dyn Fn(f32))
         mirror::instances(&mut level_instances);
         mirror::objects(&mut level_objects);
         mirror::lights(&mut level_lights);
+        mirror::fields(&mut level_fields);
         let polygons = world.meshes.iter().map(|m| &m.mesh).chain(level_instances.models.iter().map(|m| &m.mesh)).chain(level_objects.models.iter().map(|m| &m.mesh)).flat_map(|mesh| &mesh.polygons);
         mirror::tex_anims(&mut world.tex_anims, polygons, log);
         log.info(format!("  world, collision, {} instances, {} objects, {} lights, {} mirror planes, start positions and track data mirrored", level_instances.instances.len(), level_objects.objects.len(), level_lights.len(), mirror_planes.len()));
@@ -172,6 +179,10 @@ pub fn convert(settings: &Settings, id: &str, log: &Log, progress: &dyn Fn(f32))
     // the lights the game keeps while racing - they light the cars (app car_light.rs)
     extras["revolt_lights"] = json!(lights::runtime_json(&level_lights, settings.scale).to_string());
     log.info(format!("  {} of {} lights kept for the cars (extras revolt_lights)", lights::runtime(&level_lights).len(), level_lights.len()));
+    // the water: buoyancy, drag and the pull upright for the cars and objects inside (app fields.rs)
+    let fields = fields_json(&level_fields, settings.scale);
+    log.info(format!("  {} of {} force fields for the cars and objects (extras revolt_fields)", fields.as_array().map_or(0, |a| a.len()), level_fields.len()));
+    extras["revolt_fields"] = json!(fields.to_string());
     // start car and camera of the reversed scene: STARTPOSREV / STARTROTREV
     let start_extras = if reversed { reversed_start(&extras, log) } else { extras.clone() };
 
@@ -367,6 +378,22 @@ fn mirror_plane_of(mesh: &Mesh, polygon: &Polygon, planes: &[MirrorPlane]) -> i1
 
 // root node extras from the .inf, converted: meters, glTF coordinates, degrees, linear colors
 // flat values only - the engine reads no arrays or objects from extras
+// linear + orientation fields in glTF space (m) - magnitude and damping stay in game units, the app scales them like the ufo forces
+fn fields_json(fields: &[Field], scale: f32) -> Value
+{
+    let scaled = |v: [f32; 3]| to_gltf(v).map(|c| c * scale);
+    Value::Array(fields.iter().filter(|field| field.kind == FIELD_LINEAR || field.kind == FIELD_ORIENTATION).map(|field| json!(
+    {
+        "kind": field.kind,
+        "center": scaled(field.center),
+        "axes": field.axes.map(to_gltf),
+        "half_size": field.half_size.map(|c| c * scale),
+        "direction": to_gltf(field.direction),
+        "magnitude": field.magnitude,
+        "damping": field.damping,
+    })).collect())
+}
+
 fn level_extras(level: &str, scale: f32, inf: Option<&Inf>, log: &Log) -> Value
 {
     let scale = scale as f64;

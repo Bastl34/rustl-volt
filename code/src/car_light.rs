@@ -54,6 +54,8 @@ struct Tint
 pub struct CarLights
 {
     scenes: Vec<SceneLights>,
+    // scenes whose level glb has not brought its extras yet
+    pending: Vec<u32>,
     cars: HashMap<u32, Tint>,
 }
 
@@ -61,29 +63,30 @@ impl CarLights
 {
     pub fn add_scene(&mut self, scene: &Scene)
     {
-        if self.scenes.iter().any(|part| part.scene_id == scene.id) { return; }
-        let Some(level) = crate::track::find_node(&scene.nodes, &|node| node.tags.contains("revolt_level") && node.extras.contains("revolt_lights")) else { return; };
-        let level = level.read().unwrap();
-        let transform = level.get_full_transform();
-        let json: Value = level.extras.get::<String>("revolt_lights").and_then(|text| serde_json::from_str(text).ok()).unwrap_or_default();
-        let vector = |value: &Value| Vector3::new(value[0].as_f64().unwrap_or(0.0) as f32, value[1].as_f64().unwrap_or(0.0) as f32, value[2].as_f64().unwrap_or(0.0) as f32);
-        let lights: Vec<Light> = json.as_array().into_iter().flatten().map(|light|
+        if self.pending.contains(&scene.id) || self.scenes.iter().any(|part| part.scene_id == scene.id) { return; }
+        self.pending.push(scene.id);
+    }
+
+    // the waiting scenes whose level extras are there now (the level glb brings them after scene_loaded)
+    fn resolve(&mut self, state: &State)
+    {
+        let scenes = &mut self.scenes;
+        self.pending.retain(|scene_id|
         {
-            let kind = light["kind"].as_u64().unwrap_or(0) as u8;
-            let axes = [0, 1, 2].map(|row| transform.transform_vector(&vector(&light["axes"][row])).try_normalize(1e-6).unwrap_or_else(Vector3::zeros));
-            let value = if kind == SQUARE_SHADOW { vector(&light["half_size"]) } else { vector(&light["color"]) };
-            Light { kind, position: transform.transform_point(&Point3::from(vector(&light["position"]))).coords, reach: light["reach"].as_f64().unwrap_or(0.0) as f32, axes, cone: light["cone"].as_f64().unwrap_or(0.0) as f32, value }
-        }).collect();
-        let number = |key: &str| level.extras.get::<f64>(key).map(|v| *v as f32);
-        let shade = number("model_rgb").unwrap_or(1.0).max(0.05);
-        let shadow_box = level.extras.get::<String>("inf_shadowbox").and_then(|text| text.trim().parse::<f32>().ok()).unwrap_or(SHADOW_BOX);
-        console_log!("car lights: scene '{}': {} lights, {} square shadows (SHADOWBOX {})", scene.name, lights.iter().filter(|light| light.kind != SQUARE_SHADOW).count(), lights.iter().filter(|light| light.kind == SQUARE_SHADOW).count(), shadow_box);
-        self.scenes.push(SceneLights { scene_id: scene.id, lights, shade, shadow_box });
+            let Some(scene) = state.find_scene_by_id(*scene_id) else { return false; };
+            match crate::track::level_node(scene)
+            {
+                None => false,
+                Some(None) => true,
+                Some(Some(level)) => { scenes.extend(load(scene, &level)); false },
+            }
+        });
     }
 
     pub fn remove_scene(&mut self, scene_id: u32)
     {
         self.scenes.retain(|part| part.scene_id != scene_id);
+        self.pending.retain(|id| *id != scene_id);
         self.cars.retain(|_, tint| tint.scene_id != scene_id);
     }
 
@@ -96,11 +99,13 @@ impl CarLights
             paint(&node, Vector3::new(1.0, 1.0, 1.0));
         }
         self.scenes.clear();
+        self.pending.clear();
     }
 
     // shades: the soot of the bomb per car node (1 = none)
     pub fn update(&mut self, state: &State, shades: &[(u32, f32)], dt: f32)
     {
+        if !self.pending.is_empty() { self.resolve(state); }
         let follow = if dt > 0.0 { (FOLLOW * dt).min(1.0) } else { 0.0 };
         for scene in state.scenes.iter().filter(|scene| scene.active)
         {
@@ -120,6 +125,28 @@ impl CarLights
             }
         }
     }
+}
+
+// the lights of a level whose extras are loaded - None without any
+fn load(scene: &Scene, level: &NodeItem) -> Option<SceneLights>
+{
+    let level = level.read().unwrap();
+    if !level.extras.contains("revolt_lights") { return None; }
+    let transform = level.get_full_transform();
+    let json: Value = level.extras.get::<String>("revolt_lights").and_then(|text| serde_json::from_str(text).ok()).unwrap_or_default();
+    let vector = |value: &Value| Vector3::new(value[0].as_f64().unwrap_or(0.0) as f32, value[1].as_f64().unwrap_or(0.0) as f32, value[2].as_f64().unwrap_or(0.0) as f32);
+    let lights: Vec<Light> = json.as_array().into_iter().flatten().map(|light|
+    {
+        let kind = light["kind"].as_u64().unwrap_or(0) as u8;
+        let axes = [0, 1, 2].map(|row| transform.transform_vector(&vector(&light["axes"][row])).try_normalize(1e-6).unwrap_or_else(Vector3::zeros));
+        let value = if kind == SQUARE_SHADOW { vector(&light["half_size"]) } else { vector(&light["color"]) };
+        Light { kind, position: transform.transform_point(&Point3::from(vector(&light["position"]))).coords, reach: light["reach"].as_f64().unwrap_or(0.0) as f32, axes, cone: light["cone"].as_f64().unwrap_or(0.0) as f32, value }
+    }).collect();
+    let number = |key: &str| level.extras.get::<f64>(key).map(|v| *v as f32);
+    let shade = number("model_rgb").unwrap_or(1.0).max(0.05);
+    let shadow_box = level.extras.get::<String>("inf_shadowbox").and_then(|text| text.trim().parse::<f32>().ok()).unwrap_or(SHADOW_BOX);
+    console_log!("car lights: scene '{}': {} lights, {} square shadows (SHADOWBOX {})", scene.name, lights.iter().filter(|light| light.kind != SQUARE_SHADOW).count(), lights.iter().filter(|light| light.kind == SQUARE_SHADOW).count(), shadow_box);
+    Some(SceneLights { scene_id: scene.id, lights, shade, shadow_box })
 }
 
 impl SceneLights

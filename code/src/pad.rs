@@ -153,6 +153,7 @@ impl Device
                     pad_only(action);
                 }
                 controls.gamepad = GamepadSelect::Player(id);
+                controls.mouse = false;
             },
         }
         controls
