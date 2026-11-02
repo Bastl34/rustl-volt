@@ -26,6 +26,7 @@ mod piano;
 mod podium;
 mod race;
 mod random;
+mod ripples;
 mod save;
 mod setup;
 mod shots;
@@ -71,6 +72,7 @@ use shots::Shots;
 use emitters::Emitters;
 use throwers::Throwers;
 use particles::Particles;
+use ripples::Ripples;
 use weather::Weather;
 use car_light::CarLights;
 use force_fields::ForceFields;
@@ -141,6 +143,7 @@ pub struct Game
     // sparks, smoke, dust, splashes - and where the levels and cars make them
     particles: Particles,
     emitters: Emitters,
+    ripples: Ripples,
     // the fog of the levels, rain and lightning
     weather: Weather,
     // the lights and square shadows of the level on the cars
@@ -294,6 +297,8 @@ impl App for Game
         self.lasers.add_scene(&state, scene);
         self.texanims.add_scene(scene);
         self.emitters.add_scene(scene);
+        self.ripples.set_enabled(self.video().water_ripples);
+        self.ripples.add_scene(scene, &mut self.particles);
         self.weather.add_scene(scene);
         self.car_lights.add_scene(scene);
         self.force_fields.add_scene(scene);
@@ -413,6 +418,7 @@ impl App for Game
         self.lasers.remove_scene(scene_id);
         self.texanims.remove_scene(scene_id);
         self.emitters.remove_scene(scene_id);
+        self.ripples.remove_scene(scene_id);
         self.weather.remove_scene(scene_id);
         self.car_lights.remove_scene(scene_id);
         self.force_fields.remove_scene(scene_id);
@@ -585,6 +591,8 @@ impl App for Game
             let dt = if state.paused() { 0.0 } else { frame_seconds(&state) };
             self.emitters.update(&state, &mut self.particles, dt);
             self.particles.update(&mut state, dt);
+            self.ripples.set_enabled(self.video().water_ripples);
+            self.ripples.update(&mut self.particles, dt);
             self.weather.update(&mut state, dt);
             let shades = match (&self.shots, &self.race) { (Some(shots), Some((race, _))) => shots.shades(race), _ => vec![] };
             self.car_lights.update(&state, &shades, dt);
@@ -692,6 +700,7 @@ impl App for Game
         self.sounds.stop(&mut context.state.borrow_mut());
         self.texanims.stop();
         self.emitters.stop();
+        self.ripples.stop();
         self.particles.stop(&mut context.state.borrow_mut());
         self.weather.stop(&mut context.state.borrow_mut());
         self.car_lights.stop(&mut context.state.borrow_mut());

@@ -419,11 +419,13 @@ pub struct VideoSettings
     pub msaa: u32,
     pub shadows: Shadows,
     pub vsync: bool,
+    // rings where drops fall into water (ripples.rs)
+    pub water_ripples: bool,
 }
 
 impl Default for VideoSettings
 {
-    fn default() -> Self { Self { fullscreen: false, show_fps: true, msaa: 8, shadows: Shadows::Medium, vsync: true } }
+    fn default() -> Self { Self { fullscreen: false, show_fps: true, msaa: 8, shadows: Shadows::Medium, vsync: true, water_ripples: true } }
 }
 
 // antialiasing samples of the Video Settings (1 = off) - the engine clamps to what the gpu has
@@ -1266,7 +1268,7 @@ impl Menu
             // over the race: what can change there
             Screen::Options if self.return_to.is_some() => vec![item("Video Settings", true), item("Audio Settings", true), item("Controller Settings", true)],
             Screen::Options => vec![item("Game Settings", true), item("Video Settings", true), item("Audio Settings", true), item("Controller Settings", true), item("View Credits", false)],
-            Screen::VideoSettings => vec![item("Fullscreen", true), item("Show FPS", true), item("Antialiasing", true), item("Shadows", true), item("VSync", true), item("Reset to Defaults", true)],
+            Screen::VideoSettings => vec![item("Fullscreen", true), item("Show FPS", true), item("Antialiasing", true), item("Shadows", true), item("VSync", true), item("Water Ripples", true), item("Reset to Defaults", true)],
             Screen::GameSettings => vec![item("Number of Cars", true), item("Number of Laps", true), item("Difficulty", true), item("Pick ups", true), item("Speed Units", true)],
             Screen::AudioSettings => vec![item("Master Volume", true), item("Music Volume", true), item("Effects Volume", true)],
             Screen::BattleSettings => vec![item("Opponents", true), item("Difficulty", true), item("Pick ups", true), item("Stars", true), item("Take Over", true), item("Start", true)],
@@ -1372,6 +1374,7 @@ impl Menu
             2 => match self.video.msaa.min(self.max_msaa.max(1)) { 1 => "Off".to_string(), samples => format!("{samples}x") },
             3 => self.video.shadows.label().to_string(),
             4 => on_off(self.video.vsync),
+            5 => on_off(self.video.water_ripples),
             _ => String::new(),
         }
     }
@@ -1391,6 +1394,7 @@ impl Menu
             },
             3 => video.shadows = step_option(&Shadows::ALL, video.shadows, up, wrap),
             4 => video.vsync = !video.vsync,
+            5 => video.water_ripples = !video.water_ripples,
             // the window stays as it is
             _ if wrap => *video = VideoSettings { fullscreen: video.fullscreen, ..VideoSettings::default() },
             _ => {},

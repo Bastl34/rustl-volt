@@ -3,6 +3,7 @@
 // the effects only call emit / burst with a kind - the drawing (one node per kind and scene, its instances camera facing quads like the tire marks)
 // stays in here, so a particle system of the engine can take over later without touching the effects
 
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use rustl::helper::option_or_id::OptionOrId;
@@ -70,6 +71,29 @@ const HIT: u32 = 4; // bounces off the level
 const SPIN: u32 = 8;
 const GROW: u32 = 16;
 const STRETCH: u32 = 32; // own: drawn along its way
+
+// the water drops - they end where they fall into a water surface (ripples.rs draws the rings there)
+const DROPS: [Kind; 5] = [Kind::Water, Kind::Sprinkler, Kind::SprinklerBig, Kind::Dolphin, Kind::DolphinBig];
+
+// the top of a flat water object, world m (min / max: x and z)
+#[derive(Clone, Copy)]
+pub struct WaterSurface
+{
+    pub min: Vector2<f32>,
+    pub max: Vector2<f32>,
+    pub y: f32,
+}
+
+impl WaterSurface
+{
+    // where the way from -> to goes down through the surface
+    fn crossing(&self, from: Vector3<f32>, to: Vector3<f32>) -> Option<Vector3<f32>>
+    {
+        if from.y < self.y || to.y >= self.y { return None; }
+        let point = from + (to - from) * ((from.y - self.y) / (from.y - to.y));
+        (point.x >= self.min.x && point.x <= self.max.x && point.z >= self.min.y && point.z <= self.max.y).then_some(point)
+    }
+}
 
 struct Info
 {
@@ -264,6 +288,9 @@ pub struct Particles
     scenes: Vec<SceneParticles>,
     random: Random,
     next_trail: u64,
+    // per scene: the water the drops end in, where they did since take_splashes
+    surfaces: HashMap<u32, Vec<WaterSurface>>,
+    splashes: Vec<(u32, Vector3<f32>)>,
 }
 
 impl Particles
@@ -322,6 +349,17 @@ impl Particles
         self.scenes.iter_mut().flat_map(|part| part.trails.iter_mut()).find(|(trail, _)| *trail == id).map(|(_, trail)| trail)
     }
 
+    pub fn set_surfaces(&mut self, scene_id: u32, surfaces: Vec<WaterSurface>)
+    {
+        self.surfaces.insert(scene_id, surfaces);
+    }
+
+    // the points (scene, world) where drops fell into water since the last call
+    pub fn take_splashes(&mut self) -> Vec<(u32, Vector3<f32>)>
+    {
+        std::mem::take(&mut self.splashes)
+    }
+
     // a number of particles per s as whole ones this frame (the rest carried over by chance)
     pub fn due(&mut self, rate: f32, dt: f32) -> usize
     {
@@ -346,7 +384,8 @@ impl Particles
                 part.particles.clear();
                 continue;
             };
-            part.step(scene, dt);
+            let surfaces = self.surfaces.get(&part.scene_id).map_or(&[][..], Vec::as_slice);
+            part.step(scene, surfaces, &mut self.splashes, dt);
             part.draw(scene);
         }
         self.scenes.retain(|part| !part.particles.is_empty());
@@ -356,11 +395,15 @@ impl Particles
     pub fn remove_scene(&mut self, scene_id: u32)
     {
         self.scenes.retain(|part| part.scene_id != scene_id);
+        self.surfaces.remove(&scene_id);
+        self.splashes.retain(|(id, _)| *id != scene_id);
     }
 
     // all particles and their nodes go (back in the editor)
     pub fn stop(&mut self, state: &mut State)
     {
+        self.surfaces.clear();
+        self.splashes.clear();
         for part in self.scenes.drain(..)
         {
             let Some(scene) = state.find_scene_by_id_mut(part.scene_id) else { continue; };
@@ -395,13 +438,15 @@ impl Particles
 
 impl SceneParticles
 {
-    fn step(&mut self, scene: &Scene, dt: f32)
+    fn step(&mut self, scene: &Scene, surfaces: &[WaterSurface], splashes: &mut Vec<(u32, Vector3<f32>)>, dt: f32)
     {
         if dt <= 0.0 { return; }
         let gravity = scene.physics.settings.gravity;
+        let scene_id = self.scene_id;
         for (kind, particles) in self.particles.iter_mut().enumerate()
         {
             let info = &INFO[kind];
+            let drop = !surfaces.is_empty() && DROPS.contains(&ALL[kind]);
             particles.retain_mut(|particle|
             {
                 particle.age += dt;
@@ -411,6 +456,11 @@ impl SceneParticles
                 let from = particle.position;
                 let way = particle.velocity * dt;
                 particle.position += way;
+                if drop && let Some(point) = surfaces.iter().find_map(|surface| surface.crossing(from, particle.position))
+                {
+                    splashes.push((scene_id, point));
+                    return false;
+                }
                 if info.flags & HIT != 0
                 {
                     if let Some((distance, normal)) = cast(scene, from, way)
@@ -449,10 +499,13 @@ impl SceneParticles
             if particles.is_empty() && self.pools[kind].as_ref().is_none_or(|pool| pool.shown == 0) { continue; }
             let texture = self.texture.clone().flatten();
             let pool = self.pools[kind].get_or_insert_with(|| Pool::new(scene, kind, texture));
+            // new instances get a forced update of the engine in their first frame (to their transform: the origin) - drawn from the next frame on
+            let ready = pool.instances.len();
             pool.reserve(particles.len());
+            let drawn = particles.len().min(ready);
 
             let info = &INFO[kind];
-            for (particle, instance) in particles.iter().zip(&pool.instances)
+            for (particle, instance) in particles.iter().zip(&pool.instances[..drawn])
             {
                 let left = 1.0 - particle.age / particle.life;
                 let [r, g, b] = info.color;
@@ -467,11 +520,11 @@ impl SceneParticles
                 data.computed.world_matrix = transform;
                 data.computed.alpha = color.w;
             }
-            for instance in pool.instances.iter().take(pool.shown).skip(particles.len())
+            for instance in pool.instances.iter().take(pool.shown).skip(drawn)
             {
                 instance.write().unwrap().get_data_mut().get_mut().visible = false;
             }
-            pool.shown = particles.len();
+            pool.shown = drawn;
             // one upload of the whole buffer instead of one per instance
             pool.node.write().unwrap().instances.force_change();
         }
