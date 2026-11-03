@@ -93,6 +93,71 @@ const ROW: f32 = 16.0;
 const CHAR_W: f32 = 8.0;
 const CHAR_H: f32 = 12.0;
 
+// the credits below the version: text, heading (orange) - pixels per second, fade at the box edges
+const CREDITS_SPEED: f32 = 24.0;
+const CREDITS_FADE: f32 = 24.0;
+const CREDITS: &[(&str, bool)] =
+&[
+    ("", false),
+    ("A fan remake of Re-Volt,", false),
+    ("rewritten from scratch in Rust", false),
+    ("on the rustl engine.", false),
+    ("", false),
+    ("", false),
+    ("Game, Engine and Converter", true),
+    ("", false),
+    ("Bastian Karge (Bastl34)", false),
+    ("github.com/Bastl34/rustl", false),
+    ("github.com/Bastl34/rustl-volt", false),
+    ("", false),
+    ("", false),
+    ("Not the Original", true),
+    ("", false),
+    ("Rustl-Volt is a non-commercial fan project.", false),
+    ("It is not affiliated with, endorsed by or", false),
+    ("connected to the owners of Re-Volt.", false),
+    ("", false),
+    ("The code of Rustl-Volt and its converter is", false),
+    ("written from scratch - no code of the original", false),
+    ("game is used.", false),
+    ("", false),
+    ("", false),
+    ("Assets", true),
+    ("", false),
+    ("Re-Volt and all of its content - models, textures,", false),
+    ("tracks, sounds, music and names - belong to their", false),
+    ("respective owners. Re-Volt is a trademark", false),
+    ("of its owners.", false),
+    ("", false),
+    ("Rustl-Volt ships no files of the original game.", false),
+    ("Models, tracks, sounds and music are converted", false),
+    ("on your own machine, from your own copy (Steam)", false),
+    ("or the packs of re-volt.io.", false),
+    ("", false),
+    ("Car box pictures: RVGL asset pack (rvgl.org)", false),
+    ("Font: RVGL's reworked Re-Volt font,", false),
+    ("by the RVGL team, CC BY-NC-SA 4.0", false),
+    ("", false),
+    ("", false),
+    ("Thanks", true),
+    ("", false),
+    ("Acclaim Studios London", false),
+    ("for the original Re-Volt (1999)", false),
+    ("", false),
+    ("The RVGL team and the Re-Volt community", false),
+    ("for keeping the game alive", false),
+    ("", false),
+    ("re-volt.io for hosting the game files", false),
+    ("", false),
+    ("", false),
+    ("Built with", true),
+    ("", false),
+    ("Rust, wgpu, egui, rapier, rodio", false),
+    ("", false),
+    ("", false),
+    ("Thanks for playing!", true),
+];
+
 // the loading screen of a race (x, y, w, h of the 640 x 480 screen, measured on a screenshot of the game): the framed picture, the bar below
 pub const LOADING_FRAME: [f32; 4] = [10.0, 7.0, 620.0, 408.0];
 pub const LOADING_BAR: [f32; 4] = [10.0, 434.0, 620.0, 38.0];
@@ -155,6 +220,7 @@ pub enum Screen
     Progress,
     MultiSetup,
     BattleSettings,
+    Credits,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -478,7 +544,7 @@ pub struct Menu
 {
     screen: Screen,
     // the selected item per screen
-    cursor: [usize; 20],
+    cursor: [usize; 21],
     mode: Mode,
     pub settings: RaceSettings,
     pub audio: AudioSettings,
@@ -527,7 +593,7 @@ impl Menu
     {
         Self
         {
-            screen: Screen::Title, cursor: [0; 20], mode: Mode::SingleRace, settings: RaceSettings::default(), audio: AudioSettings::default(), video: VideoSettings::default(),
+            screen: Screen::Title, cursor: [0; 21], mode: Mode::SingleRace, settings: RaceSettings::default(), audio: AudioSettings::default(), video: VideoSettings::default(),
             name: String::new(), letter: 0, car: 0, track: 0, arena: 0, reversed: false, mirrored: false, trial_track: 0, trial_reversed: false, trial_mirrored: false,
             message: vec![], screen_time: 0.0, clock: 0.0, events: vec![],
             folder: folder.to_string(), version: String::new(), saved: SaveData::default(), textures: None, failed: false,
@@ -738,7 +804,7 @@ impl Menu
             Screen::CarChosen => frontend::VIEW_CAR_FLOOR,
             Screen::SelectTrack => frontend::VIEW_TRACK_SCREEN,
             Screen::MultiSetup | Screen::BattleSettings => frontend::VIEW_SELECT_RACE,
-            Screen::Options | Screen::GameSettings | Screen::AudioSettings | Screen::VideoSettings | Screen::Controls => frontend::VIEW_OPTIONS,
+            Screen::Options | Screen::GameSettings | Screen::AudioSettings | Screen::VideoSettings | Screen::Controls | Screen::Credits => frontend::VIEW_OPTIONS,
             Screen::SelectCup => VIEW_CUPS + available(&self.items(), self.cursor[Screen::SelectCup as usize], true).min(3),
             Screen::CupSummary => VIEW_SUMMARY,
             Screen::TrialTimes => VIEW_TRIAL_TIMES,
@@ -1113,7 +1179,7 @@ impl Menu
                 }
                 if back || input.enter { self.back(); }
             },
-            Screen::Progress | Screen::Controls => if back || input.enter { self.back(); },
+            Screen::Progress | Screen::Controls | Screen::Credits => if back || input.enter { self.back(); },
             _ =>
             {
                 let items = self.items();
@@ -1267,7 +1333,7 @@ impl Menu
             },
             // over the race: what can change there
             Screen::Options if self.return_to.is_some() => vec![item("Video Settings", true), item("Audio Settings", true), item("Controller Settings", true)],
-            Screen::Options => vec![item("Game Settings", true), item("Video Settings", true), item("Audio Settings", true), item("Controller Settings", true), item("View Credits", false)],
+            Screen::Options => vec![item("Game Settings", true), item("Video Settings", true), item("Audio Settings", true), item("Controller Settings", true), item("View Credits", true)],
             Screen::VideoSettings => vec![item("Fullscreen", true), item("Show FPS", true), item("Antialiasing", true), item("Shadows", true), item("VSync", true), item("Water Ripples", true), item("Reset to Defaults", true)],
             Screen::GameSettings => vec![item("Number of Cars", true), item("Number of Laps", true), item("Difficulty", true), item("Pick ups", true), item("Speed Units", true)],
             Screen::AudioSettings => vec![item("Master Volume", true), item("Music Volume", true), item("Effects Volume", true)],
@@ -1445,6 +1511,7 @@ impl Menu
             (Screen::Options, 1) => self.go(Screen::VideoSettings),
             (Screen::Options, 2) => self.go(Screen::AudioSettings),
             (Screen::Options, 3) => self.go(Screen::Controls),
+            (Screen::Options, 4) => self.go(Screen::Credits),
             (Screen::VideoSettings, index) => self.change_video(index, true, true),
             (Screen::SelectCup, _) => self.go(Screen::CupSummary),
             (Screen::Quit, 0) => self.events.push(MenuEvent::Quit),
@@ -1490,7 +1557,7 @@ impl Menu
             Screen::CarChosen => Screen::SelectCar,
             Screen::SelectTrack if self.mode == Mode::Clockwork => Screen::EnterName,
             Screen::SelectTrack => Screen::SelectCar,
-            Screen::GameSettings | Screen::AudioSettings | Screen::VideoSettings | Screen::Controls => Screen::Options,
+            Screen::GameSettings | Screen::AudioSettings | Screen::VideoSettings | Screen::Controls | Screen::Credits => Screen::Options,
         };
         self.sound("menuprev");
         self.go(previous);
@@ -1585,6 +1652,7 @@ impl Menu
             Screen::AudioSettings => { title(painter, "Audio Settings", Some(ICON_OPTIONS), has_icons); self.draw_items(painter, Some(100.0), 150.0); },
             Screen::VideoSettings => { title(painter, "Video Settings", Some(ICON_OPTIONS), has_icons); self.draw_items(painter, Some(100.0), 150.0); },
             Screen::Controls => { title(painter, "Controller Settings", Some(ICON_OPTIONS), has_icons); draw_controls(painter); },
+            Screen::Credits => { title(painter, "Credits", Some(ICON_OPTIONS), has_icons); self.draw_credits(painter); },
             Screen::BattleSettings =>
             {
                 title(painter, "Battle Settings", Some(ICON_RACE), has_icons);
@@ -1712,6 +1780,25 @@ impl Menu
         }
         let stars = format!("Stunt Arena - Stars Collected: {} of 20", self.saved.stunt_stars);
         painter.text(Anchor::Left, x0 + (520.0 - stars.len() as f32 * CHAR_W) * 0.5, y0 + 298.0, CHAR_W, CHAR_H, ITEM, &stars);
+    }
+
+    // the credits roll up through a dark box and start again, fading at its edges
+    fn draw_credits(&self, painter: &mut Painter)
+    {
+        let (top, bottom) = (112.0, 424.0);
+        let lines: Vec<(&str, Color32)> = std::iter::once((self.version.as_str(), SELECTED)).chain(CREDITS.iter().map(|(line, heading)| (*line, if *heading { SELECTED } else { ITEM }))).collect();
+        let width = lines.iter().map(|(line, _)| line.len()).max().unwrap_or(0) as f32 * CHAR_W + 48.0;
+        framed_box(painter, Anchor::Center, [(WIDTH - width) * 0.5, top - 12.0, width, bottom - top + 24.0]);
+        let period = lines.len() as f32 * ROW + (bottom - top);
+        let start = bottom - (self.screen_time * CREDITS_SPEED) % period;
+        for (i, (line, color)) in lines.iter().enumerate()
+        {
+            let y = start + i as f32 * ROW;
+            let fade = ((y - top) / CREDITS_FADE).min((bottom - CHAR_H - y) / CREDITS_FADE);
+            if fade <= 0.0 { continue; }
+            centered(painter, y, CHAR_W, CHAR_H, color.gamma_multiply(fade.min(1.0)), line);
+        }
+        centered(painter, 460.0, CHAR_W, CHAR_H, HINT, "Enter / Backspace: back");
     }
 
     // the items in a dark box at x (None: centered), the settings with their value
