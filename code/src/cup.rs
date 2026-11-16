@@ -1,10 +1,12 @@
 // the championship of the game (formats/README.md, Championship): 4 cups of 4-5 races against 7 opponents of the cup's ratings,
 // points 10-6-4-3-2-1-0-0, 3rd or better in every race to go on (3 tries to repeat a race), first in the table wins the cup and opens the next
+// split screen: every player has a row, the opponents fill up to 8 cars, one player 3rd or better qualifies, one player on top wins
 
 use rustl::egui::{self, Color32, TextureHandle, TextureOptions};
 use rustl::prelude::*;
 use rustl::resources::resources::load_binary;
 
+use crate::menu::PlayerChoice;
 use crate::hud::{suffix, Anchor, Painter, CYAN, HEIGHT, WHITE, WIDTH};
 use crate::pad::Buttons;
 use crate::race::{Race, RaceSettings};
@@ -114,6 +116,8 @@ pub struct Championship
     pub car: String,
     pub player_name: String,
     pub settings: RaceSettings,
+    // split screen: the local players (standings 0..), empty for one player
+    pub players: Vec<PlayerChoice>,
     // the standings sorted, indices
     order: Vec<usize>,
     timer: f32,
@@ -135,14 +139,19 @@ pub enum CupEvent
 
 impl Championship
 {
-    pub fn new(cup: usize, car: &str, player_name: &str, settings: RaceSettings) -> Self
+    pub fn new(cup: usize, car: &str, player_name: &str, settings: RaceSettings, players: Vec<PlayerChoice>) -> Self
     {
-        let opponents = opponents(cup, &mut Random::default());
-        let mut standings = vec![Standing { name: player_name.to_string(), car: car.to_string(), player: true, points: 0, pending: 0, places: vec![] }];
+        let mut opponents = opponents(cup, &mut Random::default());
+        opponents.truncate(CARS.saturating_sub(players.len().max(1)));
+        let mut standings: Vec<Standing> = match players.is_empty()
+        {
+            true => vec![Standing { name: player_name.to_string(), car: car.to_string(), player: true, points: 0, pending: 0, places: vec![] }],
+            false => players.iter().map(|p| Standing { name: p.name.clone(), car: p.car.clone(), player: true, points: 0, pending: 0, places: vec![] }).collect(),
+        };
         standings.extend(opponents.iter().map(|car| Standing { name: car.clone(), car: car.clone(), player: false, points: 0, pending: 0, places: vec![] }));
         let order = (0..standings.len()).collect();
         console_log!("championship: {} with {} against {}", CUPS[cup].name, car, opponents.join(", "));
-        Self { cup, stage: 0, tries: TRIES, phase: Phase::Racing, standings, opponents, car: car.to_string(), player_name: player_name.to_string(), settings, order, timer: 0.0, answer: 0, skip_input: false }
+        Self { cup, stage: 0, tries: TRIES, phase: Phase::Racing, standings, opponents, car: car.to_string(), player_name: player_name.to_string(), settings, players, order, timer: 0.0, answer: 0, skip_input: false }
     }
 
     pub fn current(&self) -> &CupRace
@@ -179,22 +188,24 @@ impl Championship
     // the race ended (Enter after the finish): the places, the points of the race - the table, or failed when worse than 3rd
     pub fn finish_race(&mut self, race: &Race) -> Vec<CupEvent>
     {
-        let player_place = race.player().position;
+        let locals = race.locals();
+        let player_place = locals.iter().map(|&i| race.racers[i].position).min().unwrap_or(u32::MAX);
+        let players = self.standings.iter().filter(|s| s.player).count();
         let mut used = vec![false; self.standings.len()];
-        for racer in &race.racers
+        for (racer_index, racer) in race.racers.iter().enumerate()
         {
-            let index = match racer.is_local()
+            let index = match locals.iter().position(|&i| i == racer_index)
             {
-                true => Some(0),
-                false =>
+                Some(local) => (local < players).then_some(local),
+                None =>
                 {
                     let car = racer.node.read().unwrap().extras.get::<String>("revolt_car").cloned().unwrap_or_default();
-                    (1..self.standings.len()).find(|&i| !used[i] && self.standings[i].car == car)
+                    (players..self.standings.len()).find(|&i| !used[i] && self.standings[i].car == car)
                 },
             };
             let Some(index) = index else { continue; };
             used[index] = true;
-            if index > 0 { self.standings[index].name = racer.name.clone(); }
+            if index >= players { self.standings[index].name = racer.name.clone(); }
             let standing = &mut self.standings[index];
             standing.places.truncate(self.stage);
             standing.places.resize(self.stage, 0);
@@ -309,10 +320,16 @@ impl Championship
         self.order.iter().take(3).map(|&i| (self.standings[i].car.clone(), self.standings[i].name.clone())).collect()
     }
 
-    // 1 = top of the table
+    // 1 = top of the table - split screen: the best player
     pub fn player_rank(&self) -> usize
     {
         self.order.iter().position(|&i| self.standings[i].player).map_or(self.standings.len(), |p| p + 1)
+    }
+
+    // the car and name of the best player in the table
+    pub fn best_player(&self) -> (String, String)
+    {
+        self.order.iter().find(|&&i| self.standings[i].player).map_or_else(|| (self.car.clone(), self.player_name.clone()), |&i| (self.standings[i].car.clone(), self.standings[i].name.clone()))
     }
 
     // the most points first, the same points: the better place in the last race

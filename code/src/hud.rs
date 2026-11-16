@@ -626,6 +626,27 @@ impl Painter
         self.meshes[page].add_rect_with_uv(rect, uv, color);
     }
 
+    // the font of the game centered on a screen point (pixels), every char w x h game units, with a 1 px black shadow
+    pub fn label(&mut self, center: Pos2, w: f32, h: f32, color: Color32, text: &str)
+    {
+        let (cw, ch) = (w * self.scale, h * self.scale);
+        let left = center.x - cw * text.chars().count() as f32 * 0.5;
+        let top = center.y - ch * 0.5;
+        for (offset, color) in [(1.0, Color32::BLACK), (0.0, color)]
+        {
+            for (i, c) in text.chars().enumerate()
+            {
+                let code = c as u32;
+                if code < GLYPH_FIRST || code > 0x7e { continue; }
+                let index = code - GLYPH_FIRST;
+                let (column, row) = ((index % GLYPHS_PER_ROW) as f32, (index / GLYPHS_PER_ROW) as f32);
+                let min = Pos2::new(left + i as f32 * cw + offset, top + offset);
+                let uv = Rect::from_min_max(Pos2::new((column * 8.0 + 0.5) / 256.0, row * 16.0 / 256.0), Pos2::new((column * 8.0 + 7.5) / 256.0, (row * 16.0 + 16.0) / 256.0));
+                self.meshes[0].add_rect_with_uv(Rect::from_min_size(min, egui::vec2(cw, ch)), uv, color);
+            }
+        }
+    }
+
     // the font of the game, every char w x h
     pub fn text(&mut self, anchor: Anchor, x: f32, y: f32, w: f32, h: f32, color: Color32, text: &str)
     {

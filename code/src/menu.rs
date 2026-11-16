@@ -15,7 +15,7 @@ use crate::bot::Difficulty;
 use crate::frontend::{self, Target, WHEEL_LETTERS};
 use crate::hud::{Anchor, Painter, HEIGHT, WIDTH};
 use crate::pad::{Buttons, Device};
-use crate::cup::{CUPS, LEVELS};
+use crate::cup::{CARS as CUP_CARS, CUPS, LEVELS};
 use crate::race::{format_time, RaceSettings};
 use crate::save::{SaveData, TRIAL_TIMES};
 
@@ -318,6 +318,8 @@ pub struct MultiSetup
     pub trial: bool,
     // battle tag in an arena (trial off)
     pub battle: bool,
+    // the championship together: the players and the cup opponents, 8 cars
+    pub cup: bool,
     pub players: usize,
     // the number of bots and how hard they drive
     pub opponents: usize,
@@ -331,7 +333,7 @@ impl Default for MultiSetup
 {
     fn default() -> Self
     {
-        Self { trial: false, battle: false, players: 2, opponents: 4, difficulty: Difficulty::Medium, slots: vec![PlayerSetup::default(); MAX_PLAYERS], turn: 0 }
+        Self { trial: false, battle: false, cup: false, players: 2, opponents: 4, difficulty: Difficulty::Medium, slots: vec![PlayerSetup::default(); MAX_PLAYERS], turn: 0 }
     }
 }
 
@@ -392,6 +394,8 @@ pub struct ChampionshipChoice
     pub car: String,
     pub player_name: String,
     pub settings: RaceSettings,
+    // split screen: the local players, empty for one player
+    pub players: Vec<PlayerChoice>,
 }
 
 impl TrackInfo
@@ -686,7 +690,7 @@ impl Menu
     {
         if self.solo.is_none() { self.solo = Some((self.name.clone(), self.car)); }
         if self.multi.slots[0].name.trim().is_empty() { self.multi.slots[0].name = self.name.clone(); }
-        self.mode = if self.multi.trial { Mode::TimeTrial } else if self.multi.battle { Mode::BattleTag } else { Mode::SingleRace };
+        self.mode = if self.multi.trial { Mode::TimeTrial } else if self.multi.battle { Mode::BattleTag } else if self.multi.cup { Mode::Championship } else { Mode::SingleRace };
         self.multi.turn = 0;
         self.load_turn();
         self.go(Screen::EnterName);
@@ -729,12 +733,12 @@ impl Menu
         let multi = &mut self.multi;
         match index
         {
-            // Single Race -> Time Trial -> Battle Tag
+            // Single Race -> Time Trial -> Battle Tag -> Championship
             0 =>
             {
-                let current = if multi.trial { 1 } else if multi.battle { 2 } else { 0 };
-                let next = step(current, 3, up);
-                (multi.trial, multi.battle) = (next == 1, next == 2);
+                let current = if multi.trial { 1 } else if multi.battle { 2 } else if multi.cup { 3 } else { 0 };
+                let next = step(current, 4, up);
+                (multi.trial, multi.battle, multi.cup) = (next == 1, next == 2, next == 3);
             },
             1 =>
             {
@@ -766,9 +770,9 @@ impl Menu
         let multi = &self.multi;
         match index
         {
-            0 => if multi.trial { "Time Trial" } else if multi.battle { "Battle Tag" } else { "Single Race" }.to_string(),
+            0 => if multi.trial { "Time Trial" } else if multi.battle { "Battle Tag" } else if multi.cup { "Championship" } else { "Single Race" }.to_string(),
             1 => multi.players.to_string(),
-            2 => if multi.trial { "0".to_string() } else { multi.opponents.to_string() },
+            2 => if multi.trial { "0".to_string() } else if multi.cup { CUP_CARS.saturating_sub(multi.players).to_string() } else { multi.opponents.to_string() },
             3 => multi.difficulty.label().to_string(),
             index if index < MULTI_ROWS + 2 * multi.players =>
             {
@@ -965,7 +969,7 @@ impl Menu
                 }
                 else
                 {
-                    self.go(Screen::SelectTrack);
+                    self.go(if self.multi.cup { Screen::SelectCup } else { Screen::SelectTrack });
                 }
                 return;
             }
@@ -1159,7 +1163,12 @@ impl Menu
                     let car = cars.get(self.car).map_or("rc".to_string(), |car| car.id.clone());
                     let cup = self.cursor[Screen::SelectCup as usize].min(CUPS.len() - 1);
                     self.sound("menunext");
-                    self.events.push(MenuEvent::Championship(ChampionshipChoice { cup, car, player_name: self.player_name(), settings: self.settings }));
+                    let (players, settings) = match self.multi_on
+                    {
+                        true => { self.save_turn(); (self.multi_players(cars), RaceSettings { difficulty: self.multi.difficulty, ..self.settings }) },
+                        false => (vec![], self.settings),
+                    };
+                    self.events.push(MenuEvent::Championship(ChampionshipChoice { cup, car, player_name: self.player_name(), settings, players }));
                 }
                 else if back { self.back(); }
             },
@@ -1274,18 +1283,24 @@ impl Menu
         if name.is_empty() { "Player 1".to_string() } else { name.to_string() }
     }
 
-    // Enter on the track: the race of all players of split screen
-    fn start_multi(&mut self, cars: &[CarInfo], tracks: &[TrackInfo])
+    // the players of split screen with their chosen names and cars
+    fn multi_players(&self, cars: &[CarInfo]) -> Vec<PlayerChoice>
     {
-        self.save_turn();
-        let track = &tracks[self.track_index().min(tracks.len() - 1)];
-        let players: Vec<PlayerChoice> = self.multi.slots[..self.multi.players].iter().enumerate().map(|(i, slot)| PlayerChoice
+        self.multi.slots[..self.multi.players].iter().enumerate().map(|(i, slot)| PlayerChoice
         {
             car: cars.get(slot.car).map_or("rc".to_string(), |car| car.id.clone()),
             name: if slot.name.trim().is_empty() { format!("Player {}", i + 1) } else { slot.name.trim().to_string() },
             device: slot.device.unwrap_or(Device::Keyboard),
             mode: slot.mode,
-        }).collect();
+        }).collect()
+    }
+
+    // Enter on the track: the race of all players of split screen
+    fn start_multi(&mut self, cars: &[CarInfo], tracks: &[TrackInfo])
+    {
+        self.save_turn();
+        let track = &tracks[self.track_index().min(tracks.len() - 1)];
+        let players = self.multi_players(cars);
         let count = players.len();
         let mut settings = self.settings;
         settings.practice = false;
@@ -1322,7 +1337,7 @@ impl Menu
             Screen::MultiSetup =>
             {
                 let racing = !self.multi.trial;
-                let mut items = vec![item("Game Mode", true), item("Players", true), item("Opponents", racing), item("Difficulty", racing && self.multi.opponents > 0)];
+                let mut items = vec![item("Game Mode", true), item("Players", true), item("Opponents", racing && !self.multi.cup), item("Difficulty", racing && (self.multi.cup || self.multi.opponents > 0))];
                 for i in 0..self.multi.players
                 {
                     items.push((format!("Player {}", i + 1), true));

@@ -152,6 +152,8 @@ pub struct Game
     force_fields: ForceFields,
     // practice: the practice stars (type 1) of the track and whether they are found
     practice_stars: Vec<(NodeItem, bool)>,
+    // practice stars floating out of reach, moved down for the run: the star and its position before
+    lowered_stars: Vec<(NodeItem, Vector3<f32>)>,
     // the level scenes the game loaded itself (menu races) - unloaded again for the next track and at Stop
     loaded_by_game: Vec<u32>,
     // kept between runs (settings, records, stars) under the project name
@@ -807,6 +809,7 @@ impl Game
                 if practice
                 {
                     for_each_node(&scene.nodes, &mut |node| if object_kind(&node.read().unwrap()) == Some(ObjectType::Star) && node.read().unwrap().extras.get::<i64>("revolt_param_type") == Some(&1) { self.practice_stars.push((node.clone(), false)); });
+                    self.lowered_stars = lower_stars(scene, &self.practice_stars);
                 }
                 console_log!("race: no pickups - {} pickups and stars hidden, {} practice stars", self.hidden_items.len(), self.practice_stars.len());
             }
@@ -1153,7 +1156,7 @@ impl Game
     // Select Cup -> Summary -> Enter: the cup with its opponents, the first race
     fn start_championship(&mut self, state: &mut State, choice: ChampionshipChoice)
     {
-        self.cup = Some(Championship::new(choice.cup, &choice.car, &choice.player_name, choice.settings));
+        self.cup = Some(Championship::new(choice.cup, &choice.car, &choice.player_name, choice.settings, choice.players));
         if let Some(run) = self.menu.as_ref() { self.cup_screen = Some(CupScreen::new(&run.assets)); }
         self.start_cup_race(state);
     }
@@ -1169,7 +1172,7 @@ impl Game
             self.end_championship(state, None, vec!["TRACK MISSING".to_string(), format!("CONVERT {}", name.to_uppercase())]);
             return;
         };
-        let choice = RaceChoice { scene_id, car: cup.car.clone(), player_name: cup.player_name.clone(), settings: cup.race_settings(), stunts: false, showroom: false, cup_stage: Some((cup.stage, cup.stages())), players: vec![] };
+        let choice = RaceChoice { scene_id, car: cup.car.clone(), player_name: cup.player_name.clone(), settings: cup.race_settings(), stunts: false, showroom: false, cup_stage: Some((cup.stage, cup.stages())), players: cup.players.clone() };
         let racing = self.menu.as_mut().and_then(|run| run.racing.take());
         self.leave_race(state, racing);
         if let Some(mut music) = self.music.take()
@@ -1230,7 +1233,8 @@ impl Game
         // the end of the cup: the podium in the frontend
         if let (Some(rank), Some(run)) = (rank, self.menu.as_ref())
         {
-            self.ceremony = Some(podium::Ceremony::new(run.frontend.scene_id, &run.assets, cup.cup, rank, new, cup.podium(), &cup.car));
+            let player = cup.best_player();
+            self.ceremony = Some(podium::Ceremony::new(run.frontend.scene_id, &run.assets, cup.cup, rank, new, cup.podium(), &player.0, &player.1));
         }
     }
 
@@ -1594,6 +1598,10 @@ impl Game
         {
             star.write().unwrap().settings.visible = true;
         }
+        for (star, position) in self.lowered_stars.drain(..)
+        {
+            field::set_position(&star, position);
+        }
         for node in self.hidden_items.drain(..)
         {
             node.write().unwrap().settings.visible = true;
@@ -1805,6 +1813,27 @@ const COUNTDOWN_VOLUME: f32 = 0.4;
 
 // m from the car to a stunt star to collect it
 const STAR_REACH: f32 = 1.2;
+// a practice star higher than this over the surface below is out of reach (wild_west2: 3.6 m over the ramp lip) - it comes down to STAR_LOWERED
+const STAR_FLOAT_MAX: f32 = 3.0;
+const STAR_LOWERED: f32 = 1.0;
+
+// the practice stars floating out of reach moved down over the surface below them - the old positions to restore
+fn lower_stars(scene: &Scene, stars: &[(NodeItem, bool)]) -> Vec<(NodeItem, Vector3<f32>)>
+{
+    use rustl::rapier3d::prelude::{QueryFilter, Ray, Vector};
+    let mut lowered = vec![];
+    for (star, _) in stars
+    {
+        let Some(position) = node_position(star) else { continue; };
+        let ray = Ray::new(Vector::new(position.x, position.y, position.z), Vector::new(0.0, -1.0, 0.0));
+        let Some((_, distance)) = scene.physics.query_pipeline(QueryFilter::only_fixed().exclude_sensors()).cast_ray(&ray, 100.0, true) else { continue; };
+        if distance <= STAR_FLOAT_MAX { continue; }
+        field::set_position(star, position - Vector3::y() * (distance - STAR_LOWERED));
+        console_log!("practice: star {} floats {:.1} m over the surface - lowered to {:.1} m", star.read().unwrap().name, distance, STAR_LOWERED);
+        lowered.push((star.clone(), position));
+    }
+    lowered
+}
 // the car showroom of the converter (every car of the game, no race)
 const SHOWROOM_SCENE: &str = "cars";
 // s the practice message stays

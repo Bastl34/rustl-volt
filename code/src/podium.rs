@@ -24,9 +24,11 @@ const ONE_CAR: f32 = 5.0;
 const ALL_CARS: f32 = 7.0;
 const OUTRO_PODIUM: f32 = 3.0;
 const OUTRO_BELOW: f32 = 5.5;
-// fireworks: from a box above the podium (game units), one every 0.1-2.6 s, 1 s up, then the burst
+// fireworks: from the podium or the floor below a box over it (game units), one every 0.1-2.6 s, 1 s up, then the burst
 const FIREWORK_MIN: [f32; 3] = [-1884.0, -700.0, 1507.0];
 const FIREWORK_SIZE: [f32; 3] = [512.0, 100.0, 512.0];
+// m a rocket starts above the surface below it
+const FIREWORK_BASE: f32 = 0.3;
 const FIREWORK_RISE: f32 = 6.0;
 const FIREWORK_FLIGHT: f32 = 1.0;
 const BURST_TIME: f32 = 0.6;
@@ -45,6 +47,9 @@ const HOP_CHANCE: f32 = 0.3;
 const BOMB_TIME: f32 = 8.0;
 const BOMB_LIFT: f32 = 6.0;
 const YELLOW: Color32 = Color32::from_rgb(255, 255, 0);
+// the name over a car: m above the car origin, char size (game units)
+const NAME_LIFT: f32 = 0.45;
+const NAME_CHAR: [f32; 2] = [8.0, 16.0];
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Step
@@ -72,6 +77,7 @@ pub struct Ceremony
     // the first three: car id and name, the player's car
     podium: Vec<(String, String)>,
     player_car: String,
+    player_name: String,
     // the message of the place, empty below 3rd
     lines: Vec<String>,
     step: Step,
@@ -81,6 +87,9 @@ pub struct Ceremony
     length: f32,
     view: usize,
     cars: Vec<Opponent>,
+    // the name of each car, and where it is on screen (normalized, y down)
+    names: Vec<String>,
+    labels: Vec<([f32; 2], String)>,
     rockets: Vec<Rocket>,
     next_rocket: Option<f32>,
     bomb: Option<(NodeItem, NodeItem, f32)>,
@@ -93,7 +102,7 @@ pub struct Ceremony
 impl Ceremony
 {
     // rank 1 = won; new: the cup was won for the first time (only then the game names what it opened)
-    pub fn new(scene_id: u32, assets: &str, cup: usize, rank: usize, new: bool, podium: Vec<(String, String)>, player_car: &str) -> Self
+    pub fn new(scene_id: u32, assets: &str, cup: usize, rank: usize, new: bool, podium: Vec<(String, String)>, player_car: &str, player_name: &str) -> Self
     {
         let mut lines = vec![];
         if rank <= 3 { lines.push(format!("YOU CAME {rank}{}!", suffix(rank as u32).to_uppercase())); }
@@ -108,8 +117,8 @@ impl Ceremony
         console_log!("podium: place {}, {}", rank, podium.iter().map(|(_, name)| name.as_str()).collect::<Vec<_>>().join(", "));
         Self
         {
-            scene_id, assets: assets.to_string(), rank, podium, player_car: player_car.to_string(), lines, step: Step::Intro, time: 0.0,
-            presented: 0, length: 0.0, view: VIEW_OVERVIEW, cars: vec![], rockets: vec![], next_rocket: None, bomb: None, hop_time: 0.0, random: Random::default(), font: None,
+            scene_id, assets: assets.to_string(), rank, podium, player_car: player_car.to_string(), player_name: player_name.to_string(), lines, step: Step::Intro, time: 0.0,
+            presented: 0, length: 0.0, view: VIEW_OVERVIEW, cars: vec![], names: vec![], labels: vec![], rockets: vec![], next_rocket: None, bomb: None, hop_time: 0.0, random: Random::default(), font: None,
         }
     }
 
@@ -147,6 +156,25 @@ impl Ceremony
         self.update_bomb(state, particles, dt);
         let target = Target { view: self.view, presented: None, landing: None, letter: 0, picture: None };
         frontend.update(state, &target, dt);
+        self.update_labels(state, frontend.camera_id);
+    }
+
+    // the names over the cars on the screen of the frontend camera
+    fn update_labels(&mut self, state: &State, camera_id: u32)
+    {
+        self.labels.clear();
+        let Some(scene) = state.find_scene_by_id(self.scene_id) else { return; };
+        let Some(camera) = scene.cameras.iter().find(|camera| camera.id == camera_id) else { return; };
+        let data = camera.get_data();
+        let (width, height) = (data.resolution_width.max(1) as f32, data.resolution_height.max(1) as f32);
+        let (eye, look) = (data.eye_pos.coords, data.dir);
+        for (car, name) in self.cars.iter().zip(&self.names)
+        {
+            let position = car.node.read().unwrap().get_full_transform().column(3).xyz() + Vector3::y() * NAME_LIFT;
+            if (position - eye).dot(&look) <= 0.0 { continue; }
+            let Some(point) = camera.world_to_screen(&Point3::from(position)) else { continue; };
+            self.labels.push(([point.x / width, 1.0 - point.y / height], name.clone()));
+        }
     }
 
     // the next car(s): one by one from 3rd on the podium, below the podium all three at once and then the player's car beside it
@@ -161,8 +189,8 @@ impl Ceremony
         }
         if self.rank > 3
         {
-            let car = self.player_car.clone();
-            if let Some(node) = self.spawn(state, &car, 3) { self.attach_bomb(state, node); }
+            let (car, name) = (self.player_car.clone(), self.player_name.clone());
+            if let Some(node) = self.spawn(state, &car, &name, 3) { self.attach_bomb(state, node); }
             self.presented = 4;
             self.length = ONE_CAR;
             self.view = VIEW_BESIDE;
@@ -178,17 +206,17 @@ impl Ceremony
 
     fn drop_car(&mut self, state: &mut State, place: usize)
     {
-        let Some((car, _)) = self.podium.get(place).cloned() else { return; };
-        self.spawn(state, &car, place);
+        let Some((car, name)) = self.podium.get(place).cloned() else { return; };
+        self.spawn(state, &car, &name, place);
     }
 
     // a car dropped at a place, facing the cameras
-    fn spawn(&mut self, state: &mut State, car: &str, place: usize) -> Option<NodeItem>
+    fn spawn(&mut self, state: &mut State, car: &str, name: &str, place: usize) -> Option<NodeItem>
     {
         let slot = Slot { floor: game(PLACES[place]), heading: Vector3::z() };
         match field::spawn_extra(state, self.scene_id, &self.assets, car, &format!("podium_{place}"), slot, None)
         {
-            Ok(opponent) => { let node = opponent.node.clone(); self.cars.push(opponent); Some(node) },
+            Ok(opponent) => { let node = opponent.node.clone(); self.cars.push(opponent); self.names.push(name.to_string()); Some(node) },
             Err(error) => { console_warning!("podium: {}", error); None },
         }
     }
@@ -202,7 +230,7 @@ impl Ceremony
             {
                 *next = 0.1 + self.random.next() * 2.5;
                 let offset: [f32; 3] = std::array::from_fn(|a| FIREWORK_MIN[a] + self.random.next() * FIREWORK_SIZE[a]);
-                let start = game(offset);
+                let start = on_surface(state, self.scene_id, game(offset));
                 if let Ok(node) = field::show_model(state, self.scene_id, &format!("{}/models/firework.glb", self.assets), "firework")
                 {
                     place(&node, start, 1.0);
@@ -312,10 +340,11 @@ impl Ceremony
         }
     }
 
-    // the place in yellow 12 x 24 at y 198 and what it opened below, like the game
+    // the place in yellow 12 x 24 at y 198 and what it opened below, like the game - the names over the cars
     pub fn ui(&mut self, ui: &mut egui::Ui)
     {
-        if self.step != Step::Intro || self.lines.is_empty() { return; }
+        let message = self.step == Step::Intro && !self.lines.is_empty();
+        if !message && self.labels.is_empty() { return; }
         if self.font.is_none()
         {
             let path = format!("{}/gfx/font.png", self.assets);
@@ -325,7 +354,13 @@ impl Ceremony
             self.font = Some(ui.ctx().load_texture("revolt_podium_font", egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw()), TextureOptions::LINEAR));
         }
         let Some(font) = &self.font else { return; };
-        let mut painter = Painter::new(ui.ctx().content_rect(), vec![font.id(), egui::TextureId::default()]);
+        let rect = ui.ctx().content_rect();
+        let mut painter = Painter::new(rect, vec![font.id(), egui::TextureId::default()]);
+        for ([x, y], name) in &self.labels
+        {
+            painter.label(rect.min + egui::vec2(x * rect.width(), y * rect.height()), NAME_CHAR[0], NAME_CHAR[1], Color32::WHITE, name);
+        }
+        if !message { painter.finish(ui.ctx(), &[1, 0]); return; }
         let width = self.lines.iter().map(|line| line.len()).max().unwrap_or(0) as f32 * 12.0;
         painter.rounded(Anchor::Center, [(WIDTH - width) * 0.5 - 20.0, 186.0, width + 40.0, self.lines.len() as f32 * 28.0 + 20.0], Color32::from_rgba_premultiplied(14, 14, 16, 0xa0), Color32::from_rgb(0xc0, 0x30, 0x28), 2.0, 8.0);
         for (i, line) in self.lines.iter().enumerate()
@@ -339,12 +374,27 @@ impl Ceremony
     {
         if let Some(scene) = state.find_scene_by_id_mut(self.scene_id) { field::remove(scene, &self.cars); }
         self.cars.clear();
+        self.names.clear();
+        self.labels.clear();
         for rocket in self.rockets.drain(..)
         {
             remove(state, self.scene_id, &rocket.node);
             if let Some(burst) = rocket.burst { remove(state, self.scene_id, &burst); }
         }
         if let Some((ball, _, _)) = self.bomb.take() { remove(state, self.scene_id, &ball); }
+    }
+}
+
+// the point moved down onto the first level surface below it (podium or floor), lifted by FIREWORK_BASE
+fn on_surface(state: &State, scene_id: u32, position: Vector3<f32>) -> Vector3<f32>
+{
+    use rustl::rapier3d::prelude::{QueryFilter, Ray, Vector};
+    let Some(scene) = state.find_scene_by_id(scene_id) else { return position; };
+    let ray = Ray::new(Vector::new(position.x, position.y, position.z), Vector::new(0.0, -1.0, 0.0));
+    match scene.physics.query_pipeline(QueryFilter::only_fixed().exclude_sensors()).cast_ray(&ray, 50.0, true)
+    {
+        Some((_, distance)) => position - Vector3::y() * (distance - FIREWORK_BASE),
+        None => position,
     }
 }
 

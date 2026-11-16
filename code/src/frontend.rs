@@ -143,7 +143,7 @@ pub struct Frontend
 {
     pub scene_id: u32,
     assets: String,
-    camera_id: u32,
+    pub camera_id: u32,
     // the scene camera as it was: position, direction, fovy, controller
     camera_restore: Option<(Point3<f32>, Vector3<f32>, f32, Option<CameraControllerBox>)>,
     view: usize,

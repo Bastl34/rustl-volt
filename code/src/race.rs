@@ -93,6 +93,9 @@ const SIGN_NONE: usize = 11;
 const FINISH_WAIT: f32 = 20.0;
 // m above the track a car is put back
 const RESET_LIFT: f32 = 0.3;
+// the floor under a reset point is searched from this high above it down to this deep below (AI points lie in slopes or float in pipes)
+const RESET_FLOOR_UP: f32 = 1.2;
+const RESET_FLOOR_DOWN: f32 = 4.0;
 // m/s above which a held car brakes instead of only the handbrake
 const HOLD_SPEED: f32 = 1.0;
 // a bot that gets less than this many m further along the track in this many s is put back onto the line - generous, the reverse gets the first try
@@ -859,6 +862,7 @@ impl Race
     {
         let racer = &self.racers[index];
         console_log!("race: {} put back onto the track ({})", racer.name, reason);
+        let position = reset_floor(scene, position).unwrap_or(position);
         with_vehicle(scene, racer.id, |vehicle, scene| vehicle.place(scene, position + Vector3::y() * (cars::ground_height(vehicle) + RESET_LIFT), heading));
     }
 
@@ -1312,4 +1316,15 @@ pub fn format_time(seconds: f64) -> String
 fn number(node: &Node, key: &str) -> Option<f32>
 {
     node.extras.get::<f64>(key).map(|v| *v as f32).or_else(|| node.extras.get::<i64>(key).map(|v| *v as f32))
+}
+
+// the drivable floor at a reset point: the first level surface facing up from a bit above it - None keeps the point
+fn reset_floor(scene: &Scene, position: Vector3<f32>) -> Option<Vector3<f32>>
+{
+    use rustl::rapier3d::prelude::{QueryFilter, Ray, Vector};
+    let top = position + Vector3::y() * RESET_FLOOR_UP;
+    let ray = Ray::new(Vector::new(top.x, top.y, top.z), Vector::new(0.0, -1.0, 0.0));
+    let (_, hit) = scene.physics.query_pipeline(QueryFilter::only_fixed().exclude_sensors()).cast_ray_and_get_normal(&ray, RESET_FLOOR_UP + RESET_FLOOR_DOWN, true)?;
+    if hit.normal.y.abs() < 0.5 { return None; }
+    Some(Vector3::new(position.x, top.y - hit.time_of_impact, position.z))
 }

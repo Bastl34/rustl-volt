@@ -322,7 +322,7 @@ fn for_each(nodes: &Vec<NodeItem>, f: &mut dyn FnMut(&NodeItem))
     }
 }
 
-fn set_position(node: &NodeItem, position: Vector3<f32>)
+pub fn set_position(node: &NodeItem, position: Vector3<f32>)
 {
     let node = node.read().unwrap();
     if let Some(transform) = node.find_component::<Transformation>()

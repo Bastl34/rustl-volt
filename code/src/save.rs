@@ -47,6 +47,7 @@ pub struct Multi
 {
     pub trial: bool,
     pub battle: bool,
+    pub cup: bool,
     pub players: usize,
     // the first version had only on / off - read when the count is missing
     pub bots: bool,
@@ -200,6 +201,7 @@ impl SaveData
         let Some(saved) = &self.multi else { return setup; };
         setup.trial = saved.trial;
         setup.battle = saved.battle && !saved.trial;
+        setup.cup = saved.cup && !saved.trial && !saved.battle;
         setup.players = saved.players.clamp(2, MAX_PLAYERS);
         setup.opponents = saved.opponents.unwrap_or(if saved.bots { setup.opponents } else { 0 }).min(12 - setup.players);
         if let Some(difficulty) = Difficulty::ALL.iter().find(|d| d.label() == saved.difficulty) { setup.difficulty = *difficulty; }
@@ -219,7 +221,7 @@ impl SaveData
     pub fn set_multi_setup(&mut self, setup: &MultiSetup)
     {
         let slots = setup.slots.iter().map(|slot| MultiSlot { name: slot.name.clone(), device: slot.device.map(Device::key).unwrap_or_default(), car: slot.car, mode: slot.mode.label().to_string() }).collect();
-        self.multi = Some(Multi { trial: setup.trial, battle: setup.battle, players: setup.players, bots: setup.opponents > 0, opponents: Some(setup.opponents), difficulty: setup.difficulty.label().to_string(), slots });
+        self.multi = Some(Multi { trial: setup.trial, battle: setup.battle, cup: setup.cup, players: setup.players, bots: setup.opponents > 0, opponents: Some(setup.opponents), difficulty: setup.difficulty.label().to_string(), slots });
     }
 
     pub fn video_settings(&self) -> VideoSettings
