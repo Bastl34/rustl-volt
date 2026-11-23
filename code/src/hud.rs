@@ -170,25 +170,21 @@ impl Hud
         }
         self.message = self.message.take().filter(|(_, left)| *left > 0.0);
 
-        // split view: only place, name and lap in every viewport - split screen: the whole HUD in the viewport of each player; the countdown and the results over all of them
+        // split view (V): the whole HUD in every viewport - split screen: in the viewport of each player, the bot cells only place, name and lap; the countdown and the results over all of them
         if !race.split_views().is_empty()
         {
             for &(index, _, [x, y, w, h]) in race.split_views()
             {
                 let cell = cell_rect(rect, [x, y, w, h]);
-                // the split view (V) keeps its labels as big as the height allows
-                match race.multi()
+                painter.set_rect(cell);
+                // the fps in the HUD of the player (bottom left) - top right it covered the times of the right cell
+                let cell_fps = (self.show_fps && index == race.player_index()).then_some(fps);
+                match !race.multi() || race.racers[index].is_local()
                 {
-                    true => painter.set_rect(cell),
-                    false => { painter.rect = cell; painter.scale = cell.height() / HEIGHT; painter.extra = 0.0; },
-                }
-                match race.multi() && race.racers[index].is_local()
-                {
-                    // split screen: the fps in the HUD of player 1 (bottom left) - top right it covered the times of the right cell
-                    true => self.draw_racer(&mut painter, race, index, weapons, (self.show_fps && index == race.player_index()).then_some(fps)),
+                    true => self.draw_cell(&mut painter, race, index, weapons, cell_fps),
                     false => painter.split_label(&race.racers[index], race.settings.laps, race.battle.as_ref().map(|battle| battle.clock(index))),
                 }
-                if race.multi() { painter.shapes.push(egui::Shape::rect_stroke(cell, 0.0, egui::Stroke::new(CELL_LINE, Color32::BLACK), egui::StrokeKind::Inside)); }
+                painter.shapes.push(egui::Shape::rect_stroke(cell, 0.0, egui::Stroke::new(CELL_LINE, Color32::BLACK), egui::StrokeKind::Inside));
             }
             // split screen without bots: the cells nobody has stay black
             for view in race.empty_cells()
@@ -196,12 +192,6 @@ impl Hud
                 painter.shapes.push(egui::Shape::rect_filled(cell_rect(rect, *view), 0.0, Color32::BLACK));
             }
             painter.set_rect(rect);
-            // the split view (V): fps top right over all viewports
-            if self.show_fps && !race.multi()
-            {
-                painter.text(Anchor::Right, 560.0, 8.0, 8.0, 16.0, CYAN, "fps");
-                painter.text(Anchor::Right, 592.0, 8.0, 8.0, 16.0, WHITE, &fps.to_string());
-            }
             if let Some((text, _)) = &self.message
             {
                 message(&mut painter, text, message_y(race));
@@ -277,6 +267,27 @@ impl Hud
         painter.finish_all(ui.ctx());
     }
 
+    // one viewport of the split view: practice only the speed, the power up test speed + weapon, else the HUD of the racer
+    fn draw_cell(&self, painter: &mut Painter, race: &Race, index: usize, weapons: Option<&Weapons>, fps: Option<u32>)
+    {
+        if !race.settings.practice && !race.settings.playground
+        {
+            self.draw_racer(painter, race, index, weapons, fps);
+            return;
+        }
+        self.draw_speed(painter, index, race.racers[index].speed, race.settings.kmh);
+        if race.settings.playground
+        {
+            painter.sprite(1, Anchor::Left, [16.0, 56.0, 64.0, 64.0], WEAPON_FRAME_UV, alpha(FRAME_ALPHA));
+            if let Some(hand) = weapons.and_then(|weapons| weapons.hand(index)) { painter.weapon(hand); }
+        }
+        if let Some(fps) = fps
+        {
+            painter.text(Anchor::Left, 16.0, 392.0, 8.0, 12.0, CYAN, "fps");
+            painter.text(Anchor::Left, 16.0, 404.0, 8.0, 12.0, WHITE, &fps.to_string());
+        }
+    }
+
     // the HUD of one racer in the rect of the painter: lap, weapon, times, wrong way, sign, place, arrow, speed, the cars around - fps if given
     fn draw_racer(&self, painter: &mut Painter, race: &Race, index: usize, weapons: Option<&Weapons>, fps: Option<u32>)
     {
@@ -295,10 +306,10 @@ impl Hud
         {
             if let Some(hand) = weapons.hand(index) { painter.weapon(hand); }
         }
-        // split screen: the name of the player under the weapon
-        if race.multi()
+        // split screen / split view: the name under the weapon, players orange
+        if !race.split_views().is_empty()
         {
-            painter.text(Anchor::Left, 16.0, 128.0, 8.0, 16.0, AMMO, &racer.name.chars().take(16).collect::<String>());
+            painter.text(Anchor::Left, 16.0, 128.0, 8.0, 16.0, if racer.is_local() { AMMO } else { WHITE }, &racer.name.chars().take(16).collect::<String>());
         }
 
         // top right: the times, labels right aligned at 624, values at 552
@@ -341,8 +352,8 @@ impl Hud
         // the cars ahead and behind - none without opponents
         painter.neighbours(racer.ahead.as_ref(), racer.behind.as_ref());
 
-        // split screen: a player through shows place and time in the own cell until the results come (above the middle - tall cells stretch below it)
-        if race.multi() && racer.finished() && !(race.over || race.locals_finished())
+        // split screen / split view: a car through shows place and time in the own cell until the results come (above the middle - tall cells stretch below it)
+        if !race.split_views().is_empty() && racer.finished() && !(race.over || race.locals_finished())
         {
             let place = format!("{}{}", racer.position, suffix(racer.position));
             let time = format_time(racer.finish_time.unwrap_or(0.0));
@@ -364,9 +375,9 @@ impl Hud
         painter.text(Anchor::Left, 16.0, 32.0, 8.0, 16.0, if holding { AMMO } else { WHITE }, &format_time(battle.clock(index)));
         painter.sprite(1, Anchor::Left, [16.0, 56.0, 64.0, 64.0], WEAPON_FRAME_UV, alpha(FRAME_ALPHA));
         if let Some(hand) = weapons.and_then(|weapons| weapons.hand(index)) { painter.weapon(hand); }
-        if race.multi()
+        if !race.split_views().is_empty()
         {
-            painter.text(Anchor::Left, 16.0, 128.0, 8.0, 16.0, AMMO, &racer.name.chars().take(16).collect::<String>());
+            painter.text(Anchor::Left, 16.0, 128.0, 8.0, 16.0, if racer.is_local() { AMMO } else { WHITE }, &racer.name.chars().take(16).collect::<String>());
         }
 
         // who has the star and his clock

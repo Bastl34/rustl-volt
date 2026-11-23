@@ -860,6 +860,11 @@ impl Race
 
     fn put_on_track(&mut self, scene: &mut Scene, index: usize, position: Vector3<f32>, heading: Vector3<f32>, reason: &str)
     {
+        // it faces along the track now - no wrong way left over from before
+        let racer = &mut self.racers[index];
+        racer.wrong_way = false;
+        racer.wrong_way_flag = false;
+        racer.wrong_way_timer = 0.0;
         let racer = &self.racers[index];
         console_log!("race: {} put back onto the track ({})", racer.name, reason);
         let position = reset_floor(scene, position).unwrap_or(position);
@@ -1072,9 +1077,10 @@ impl Race
             let up_y = racer.node.read().unwrap().get_full_transform().column(1).xyz().normalize().y;
             let (throttle, brake) = vehicle(scene, id).map_or((0.0, 0.0), |vehicle| { let t = vehicle.telemetry(); (t.throttle, t.brake) });
             let position = racer.node.read().unwrap().get_full_transform().column(3).xyz();
+            let against = view(scene, racer).is_some_and(|view| assist::driving_against(&self.track, racer.ai, &view, racer.wrong_way_flag));
             let stuck = self.racers[index].stuck.update(position, throttle, brake, dt);
             let racer = &self.racers[index];
-            assist::lost(&self.track, racer.ai, up_y, racer.wrong_way, stuck)
+            assist::lost(&self.track, racer.ai, up_y, racer.wrong_way, against, stuck)
         }
         else { self.racers[index].stuck.clear(); None };
         let racer = &mut self.racers[index];
@@ -1082,6 +1088,14 @@ impl Race
         let Some((reason, _)) = lost.filter(|(_, after)| racer.lost_time > *after) else { return; };
         racer.lost_time = 0.0;
         racer.stuck.clear();
+        // turned round where it is (still on the track), else back onto the next node of the last place on the track
+        if reason == assist::TURNED_ROUND
+        {
+            let Some(place) = racer.ai else { return; };
+            let (position, heading) = assist::turn_round_spot(&self.track, place);
+            self.put_on_track(scene, index, position, heading, reason);
+            return;
+        }
         let Some(place) = racer.track_place.or(racer.ai) else { return; };
         if let BotAction::Reset { position, heading, .. } = bot::reset_action(&self.track, place, 0, reason)
         {

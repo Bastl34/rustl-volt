@@ -1,6 +1,6 @@
 // the driving modes of the game (Select Mode: Simulation, Arcade, Console, Junior RC - formats/README.md "Driving modes") with own assists for the player car
 // the game: from Console on, ground hits give the car no spin; Junior RC changes car values too - here: stability by damping roll and pitch,
-// Junior RC also steers back onto the track near its edges (like the smart steering of kart games), turns a car around that drives the wrong way
+// Junior RC also steers back onto the track near its edges (like the smart steering of kart games), turns a car round on the track that drives the wrong way
 // and puts it back onto the track when it is lost (upside down, the wrong way, far off the track, stuck while the driver tries to drive)
 
 use rustl::prelude::*;
@@ -32,8 +32,9 @@ const LINE_LENGTH: f32 = 16.0;
 const MIN_TURN_SPEED: f32 = 1.0;
 // 1/s the weight of the help changes by - in and out without a jolt of the wheels
 pub const BLEND_RATE: f32 = 5.0;
-// share of the steering the turning around takes
-const TURN_BACK_WEIGHT: f32 = 0.85;
+// driving the wrong way: nose against the track direction beyond this dot, for this many s - then turned round on the racing line
+const TURN_ROUND_DOT: f32 = 0.5;
+const TURN_ROUND_AFTER: f32 = 1.0;
 // Junior RC puts the car back onto the track after this many s: upside down, the wrong way (after the 1 s of the HUD), far off the track
 const RESPAWN_UPSIDE_DOWN: f32 = 1.5;
 const RESPAWN_WRONG_WAY: f32 = 3.0;
@@ -110,15 +111,9 @@ pub fn steer_back(track: &Track, place: Option<AiPlace>, view: &BotView) -> Opti
 {
     let place = place?;
     if view.speed.abs() < MIN_TURN_SPEED || !track.has_ai() { return None; }
+    // the wrong way: no help (it steered fast cars into the walls) - turn_round puts the car round; backing up is the driver's way out
     let along = track.segment_direction(place.node, place.next);
-    // the wrong way: the nose turned towards the track direction the shorter way round, backwards the steering turns the car the other way
-    if Vector3::new(view.forward.x, 0.0, view.forward.z).dot(&along) < 0.0
-    {
-        let steer = if along.dot(&view.right) > 0.0 { -1.0 } else { 1.0 };
-        return Some((steer * view.speed.signum(), TURN_BACK_WEIGHT));
-    }
-    // backing up is the driver's way out
-    if view.speed < 0.0 { return None; }
+    if Vector3::new(view.forward.x, 0.0, view.forward.z).dot(&along) < 0.0 || view.speed < 0.0 { return None; }
 
     let ahead = view.position + view.forward * view.speed * LOOK_AHEAD;
     let share = [view.position, ahead].iter().filter_map(|p| across(track, track.ai_place(*p, Some(place))?, *p)).map(|a| a.min(1.0 - a)).fold(f32::MAX, f32::min);
@@ -127,6 +122,21 @@ pub fn steer_back(track: &Track, place: Option<AiPlace>, view: &BotView) -> Opti
 
     let line = bot::line_ahead(track, place, view.position, LINE_LENGTH, 0.0, 0);
     Some((bot::steer_along(view, &line), weight))
+}
+
+// Junior RC: driving forwards against the track direction (the .pan wrong way too) - the car is turned round after TURN_ROUND_AFTER
+pub fn driving_against(track: &Track, place: Option<AiPlace>, view: &BotView, wrong_way: bool) -> bool
+{
+    let Some(place) = place else { return false; };
+    let forward = Vector3::new(view.forward.x, 0.0, view.forward.z);
+    wrong_way && view.up.y >= UPRIGHT && view.speed > MIN_TURN_SPEED && track.has_ai() && forward.dot(&track.segment_direction(place.node, place.next)) < -TURN_ROUND_DOT * forward.norm()
+}
+
+// the racing line where the car is, facing along the track
+pub fn turn_round_spot(track: &Track, place: AiPlace) -> (Vector3<f32>, Vector3<f32>)
+{
+    let position = track.racing_point(place.node, 0.0).lerp(&track.racing_point(place.next, 0.0), place.t.clamp(0.0, 1.0));
+    (position, track.segment_direction(place.node, place.next))
 }
 
 // the share across the track at a position (0 left edge, 1 right edge, beyond outside)
@@ -178,11 +188,15 @@ impl StuckWatch
     }
 }
 
+pub const TURNED_ROUND: &str = "turned round";
+
 // Junior RC: why the car should be put back onto the track and after how many s - None while it drives fine (stuck: the watch waited already)
-pub fn lost(track: &Track, place: Option<AiPlace>, up_y: f32, wrong_way: bool, stuck: bool) -> Option<(&'static str, f32)>
+// against: driving_against - TURNED_ROUND puts it round where it is, the others onto the next node
+pub fn lost(track: &Track, place: Option<AiPlace>, up_y: f32, wrong_way: bool, against: bool, stuck: bool) -> Option<(&'static str, f32)>
 {
     let off_track = place.is_some_and(|place| place.distance > track.half_width(place.node) + OFF_TRACK);
     if up_y < UPRIGHT { Some(("upside down", RESPAWN_UPSIDE_DOWN)) }
+    else if against && !off_track { Some((TURNED_ROUND, TURN_ROUND_AFTER)) }
     else if wrong_way { Some(("the wrong way", RESPAWN_WRONG_WAY)) }
     else if off_track { Some(("off the track", RESPAWN_OFF_TRACK)) }
     else if stuck { Some(("stuck", 0.0)) }

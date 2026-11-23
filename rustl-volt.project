@@ -10,7 +10,7 @@
     "description": "",
     "license": "",
     "url": "",
-    "build": 21
+    "build": 22
   },
   "settings": {
     "rendering": {
@@ -45,6 +45,7 @@
       "ssao_strength": 1.0
     },
     "audio": {
+      "mute": false,
       "volume": 1.0
     },
     "window": {
